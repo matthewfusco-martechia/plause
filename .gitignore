@@ -1,0 +1,17 @@
+node_modules/
+.pnpm-store/
+.wrangler/
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
+.local/
+dist/
+coverage/
+*.log
+*.pem
+*.key
+*.dump
+*.sqlite
+*.sqlite3
+.DS_Store

@@ -20,7 +20,7 @@ pnpm install --frozen-lockfile --ignore-scripts
 pnpm check
 ```
 
-The unit tests use synthetic credentials, mocked providers and PGlite, with unmocked outbound requests denied. Do not use `pnpm dev`, deployment scripts, live evals or benchmark scripts as an offline check: those are separate workflows with service prerequisites. [Local validation](agent-app/PLAUSE.md#local-validation) records the exact commands and current results.
+The unit tests use synthetic credentials, mocked providers and PGlite, with unmocked outbound requests denied. Do not use `pnpm dev`, deployment scripts, live evals or benchmark scripts as an offline check: those are separate workflows with service prerequisites. [Local validation](agent-app/PLAUSE.md#validation) records the exact commands and current results.
 
 ## Preserved staging foundation
 
@@ -29,5 +29,5 @@ The root `apps/`, `packages/`, `migrations/` and npm scripts belong to the exist
 The existing database, encryption material, credentials and deployed configuration are preserved. No automatic account or conversation migration is performed. See [staging access](docs/staging-access.md), the [Worker documentation](docs/worker-foundation.md) and [HANDOFF](HANDOFF.md) for its verified behavior and historical tests.
 
 Before any new public deployment, protect both the Next and Eve hosts, restrict enrollment, retain per-user authorization, and test the actual iMessage connection. Cloning the repository does not establish any live connection.
-# plause
-# plause
+
+See the [owner setup checklist](docs/owner-setup-checklist.md) for the account, consent and device steps that require the owner's involvement.

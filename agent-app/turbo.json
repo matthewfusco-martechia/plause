@@ -1,0 +1,117 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "tasks": {
+    "build:app": {
+      "dependsOn": ["^build:app"],
+      "env": [
+        "BETTER_AUTH_*",
+        "BROWSER_ACTIONS_ENABLED",
+        "DATABASE_URL",
+        "GOOGLE_CLIENT_*",
+        "GOOGLE_WORKSPACE_WRITES_ENABLED",
+        "INTERNAL_SERVICE_SECRET",
+        "KERNEL_*",
+        "LINQ_*",
+        "LINK_*",
+        "LIVE_MODEL_ENABLED",
+        "WEB_RESEARCH_ENABLED",
+        "TAVILY_*",
+        "MODEL_*",
+        "OPENAI_*",
+        "R2_*",
+        "PRIVATE_ALLOWED_PHONE_NUMBERS",
+        "STRIPE_PUBLISHABLE_KEY",
+        "NODE_ENV",
+        "SECRET_ENCRYPTION_KEY",
+        "VERCEL_ENV",
+        "EVE_TELEMETRY_DISABLED",
+        "NEXT_TELEMETRY_DISABLED",
+        "DO_NOT_TRACK",
+        "EVE_NEXT_*"
+      ],
+      "outputs": [".next/**", "!.next/cache/**", "next-env.d.ts"]
+    },
+    "db:migrate": {
+      "cache": false,
+      "env": ["DATABASE_URL_UNPOOLED"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"]
+    },
+    "dev:app": {
+      "cache": false,
+      "passThroughEnv": [
+        "BETTER_AUTH_*",
+        "BROWSER_ACTIONS_ENABLED",
+        "DATABASE_URL",
+        "GOOGLE_CLIENT_*",
+        "GOOGLE_WORKSPACE_WRITES_ENABLED",
+        "INTERNAL_SERVICE_SECRET",
+        "KERNEL_*",
+        "LINQ_*",
+        "LINK_*",
+        "LIVE_MODEL_ENABLED",
+        "WEB_RESEARCH_ENABLED",
+        "TAVILY_*",
+        "MODEL_*",
+        "OPENAI_*",
+        "R2_*",
+        "PRIVATE_ALLOWED_PHONE_NUMBERS",
+        "STRIPE_PUBLISHABLE_KEY",
+        "NODE_ENV",
+        "SECRET_ENCRYPTION_KEY",
+        "VERCEL_ENV",
+        "EVE_TELEMETRY_DISABLED",
+        "NEXT_TELEMETRY_DISABLED",
+        "DO_NOT_TRACK"
+      ],
+      "persistent": true
+    },
+    "format:check": {
+      "outputs": []
+    },
+    "knip": {
+      "outputs": []
+    },
+    "lint:app": {
+      "outputs": []
+    },
+    "start:app": {
+      "cache": false,
+      "passThroughEnv": [
+        "BETTER_AUTH_*",
+        "BROWSER_ACTIONS_ENABLED",
+        "DATABASE_URL",
+        "GOOGLE_CLIENT_*",
+        "GOOGLE_WORKSPACE_WRITES_ENABLED",
+        "INTERNAL_SERVICE_SECRET",
+        "KERNEL_*",
+        "LINQ_*",
+        "LINK_*",
+        "LIVE_MODEL_ENABLED",
+        "WEB_RESEARCH_ENABLED",
+        "TAVILY_*",
+        "MODEL_*",
+        "OPENAI_*",
+        "R2_*",
+        "PRIVATE_ALLOWED_PHONE_NUMBERS",
+        "STRIPE_PUBLISHABLE_KEY",
+        "NODE_ENV",
+        "SECRET_ENCRYPTION_KEY",
+        "VERCEL_ENV",
+        "EVE_TELEMETRY_DISABLED",
+        "NEXT_TELEMETRY_DISABLED",
+        "DO_NOT_TRACK"
+      ],
+      "persistent": true
+    },
+    "test:app": {
+      "outputs": []
+    },
+    "types:generate": {
+      "outputs": [".next/types/**", "next-env.d.ts"]
+    },
+    "types:check:app": {
+      "dependsOn": ["types:generate"],
+      "outputs": ["*.tsbuildinfo"]
+    }
+  }
+}

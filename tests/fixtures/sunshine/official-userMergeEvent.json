@@ -1,0 +1,31 @@
+{
+  "app": {
+    "id": "5ebee0975ac5304b664a12fa"
+  },
+  "webhook": {
+    "id": "5f4eaef81e3dcc117c7ba48a",
+    "version": "v2"
+  },
+  "events": [
+    {
+      "id": "5f74a0d52b5315fc007e798a",
+      "createdAt": "2020-09-30T15:14:29.834Z",
+      "type": "user:merge",
+      "payload": {
+        "mergedUsers": {
+          "surviving": {
+            "id": "26508c10541a4b0ff472e5e2",
+            "externalId": "912382197",
+            "authenticated": true
+          },
+          "discarded": {
+            "id": "1a64f7f75028fef55f815007",
+            "externalId": "912382198",
+            "authenticated": true
+          }
+        },
+        "reason": "api"
+      }
+    }
+  ]
+}

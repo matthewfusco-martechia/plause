@@ -1,0 +1,44 @@
+{
+  "name": "plause",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/wrangler.mjs dev --local --ip 127.0.0.1 --port 8787",
+    "setup": "node scripts/setup.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run && node --test scripts/*.test.mjs",
+    "check": "npm run typecheck && npm test",
+    "build": "node scripts/wrangler.mjs deploy --dry-run --outdir dist",
+    "demo": "node scripts/demo.mjs",
+    "configure:model": "node scripts/configure-model.mjs",
+    "configure:identity": "node scripts/configure-identity.mjs",
+    "eval:model": "node scripts/evaluate-model.mjs",
+    "demo:memory": "node scripts/demo-memory.mjs",
+    "configure:search": "node scripts/configure-search.mjs",
+    "demo:agent": "node scripts/demo-agent.mjs",
+    "test:e2e": "node scripts/e2e.mjs",
+    "backup:local": "node scripts/backup.mjs",
+    "restore:verify": "node scripts/restore-verify.mjs",
+    "configure:encryption": "node scripts/configure-encryption.mjs",
+    "configure:cloud": "node scripts/configure-cloud.mjs",
+    "readiness": "node scripts/live-readiness.mjs"
+  },
+  "engines": {
+    "node": ">=24.10.0"
+  },
+  "dependencies": {
+    "jose": "6.2.14",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.11",
+    "@cloudflare/workers-types": "5.20261030.1",
+    "@types/node": "26.6.6",
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261023.3-beta",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5",
+    "wrangler": "4.156.0"
+  }
+}

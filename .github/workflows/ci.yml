@@ -1,0 +1,72 @@
+name: Plause checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: e2e-report
+          path: .local/e2e-report.json
+          if-no-files-found: ignore
+
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: agent-app
+    env:
+      npm_config_manage_package_manager_versions: "false"
+      NEXT_TELEMETRY_DISABLED: "1"
+      EVE_TELEMETRY_DISABLED: "1"
+      TURBO_TELEMETRY_DISABLED: "1"
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: npm install --global --ignore-scripts pnpm@11.24.0
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm check
+      - run: pnpm build -- --webpack
+        env:
+          NODE_ENV: production
+          DATABASE_URL: postgresql://test:test@127.0.0.1:1/plause_ci
+          KERNEL_API_KEY: plause-ci-not-a-key
+          BETTER_AUTH_SECRET: plause-ci-only-0123456789abcdefghijk
+          BETTER_AUTH_URL: http://localhost:3000
+          SECRET_ENCRYPTION_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+          INTERNAL_SERVICE_SECRET: plause-ci-internal-only-0123456789abcdefghijk
+          LIVE_MODEL_ENABLED: "false"
+          WEB_RESEARCH_ENABLED: "false"
+          BROWSER_ACTIONS_ENABLED: "false"
+          GOOGLE_WORKSPACE_WRITES_ENABLED: "false"
+          PRIVATE_ALLOWED_PHONE_NUMBERS: ""

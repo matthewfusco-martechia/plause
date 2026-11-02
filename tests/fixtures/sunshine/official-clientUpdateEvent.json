@@ -1,0 +1,50 @@
+{
+  "app": {
+    "id": "60bf823452c2a718162f986a"
+  },
+  "webhook": {
+    "id": "612905a67821c3f206d6909f",
+    "version": "v2"
+  },
+  "events": [
+    {
+      "id": "61290a62c64b3af1ff868714",
+      "createdAt": "2021-08-27T15:53:06.744Z",
+      "type": "client:update",
+      "payload": {
+        "conversation": {
+          "id": "c2c8710dedf8f26ee6e9a68f",
+          "type": "personal"
+        },
+        "user": {
+          "id": "6a2343df57be6fe0f98efc33",
+          "authenticated": false
+        },
+        "client": {
+          "integrationId": "60bfc8fa67951336472cc57a",
+          "type": "twilio",
+          "externalId": "+15140000000",
+          "id": "61290a4f7821c3f206d690a3",
+          "displayName": "+1 514-000-0000",
+          "status": "active",
+          "info": {
+            "phoneNumber": "+15140000000",
+            "city": "MONTREAL",
+            "country": "CA",
+            "state": "QC"
+          },
+          "raw": {
+            "FromZip": "",
+            "FromState": "QC",
+            "FromCity": "MONTREAL",
+            "FromCountry": "CA",
+            "From": "+15140000000"
+          },
+          "lastSeen": "2021-08-27T15:53:06.721Z",
+          "linkedAt": "2021-08-27T15:52:47.998Z"
+        },
+        "reason": "confirmed"
+      }
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "app": {
+    "id": "5ebee0975ac5304b664a12fa"
+  },
+  "webhook": {
+    "id": "5f4eaef81e3dcc117c7ba48a",
+    "version": "v2"
+  },
+  "events": [
+    {
+      "id": "5f74a0d52b5315fc007e798a",
+      "createdAt": "2020-09-30T15:14:29.834Z",
+      "type": "conversation:message",
+      "payload": {
+        "conversation": {
+          "id": "f52b01137aa6c250bc7251fa",
+          "type": "personal",
+          "activeSwitchboardIntegration": {
+            "id": "5eecde2dcdbffb08f5c3ed37",
+            "name": "bot",
+            "integrationId": "5f11a650e4e987667c2051d1",
+            "integrationType": "custom"
+          }
+        },
+        "message": {
+          "id": "5f74c7d84a146f3abd72af1d",
+          "received": "2020-09-30T18:00:56.820Z",
+          "author": {
+            "userId": "26508c10541a4b0ff472e5e2",
+            "avatarUrl": "https://s3.amazonaws.com/avatar.jpg",
+            "displayName": "Steve Rogers",
+            "type": "user",
+            "user": {
+              "id": "26508c10541a4b0ff472e5e2",
+              "externalId": "912382197",
+              "authenticated": true
+            }
+          },
+          "content": {
+            "type": "text",
+            "text": "hello"
+          },
+          "source": {
+            "integrationId": "5ec69c6e12dda33be985cb1a",
+            "originalMessageId": "374",
+            "originalMessageTimestamp": "2020-09-30T18:00:56.000Z",
+            "type": "telegram"
+          }
+        }
+      }
+    }
+  ]
+}

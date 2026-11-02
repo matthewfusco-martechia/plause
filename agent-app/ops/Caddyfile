@@ -1,0 +1,19 @@
+# Review and validate before deployment. Next and Eve listen on loopback only.
+# PLAUSE_HOST is a hostname, and PLAUSE_ACCESS_HASH is a bcrypt hash produced
+# interactively with `caddy hash-password`; never put a plaintext password here.
+{$PLAUSE_HOST} {
+	@service path /webhooks/linq /internal/linq/dispatch /internal/scheduled-run/report /internal/scheduled-run/respond /.well-known/workflow/*
+	handle @service {
+		# Linq signatures, internal HMAC leases and workflow tokens remain required.
+		reverse_proxy 127.0.0.1:4274
+	}
+	handle {
+		basic_auth {
+			plause {$PLAUSE_ACCESS_HASH}
+		}
+		reverse_proxy 127.0.0.1:3000 {
+			# The password is for the proxy alone. App authorization uses its cookie.
+			header_up -Authorization
+		}
+	}
+}

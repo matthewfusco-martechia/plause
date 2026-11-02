@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f3ed" />
+    <meta name="description" content="Sign in to Plause to link Messages and manage your account." />
+    <title>Plause · Your account</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="masthead">
+        <a class="wordmark" href="/" aria-label="Plause home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>plause<span class="wordmark-dot">.</span></a>
+        <div class="masthead-controls">
+          <span id="surface-label" class="environment-label">Your account</span>
+          <button id="logout-button" class="session-signout" type="button" hidden>Sign out</button>
+        </div>
+      </header>
+
+      <main>
+        <section id="login-view" class="login-layout" aria-labelledby="welcome-title">
+          <div class="introduction">
+            <span class="eyebrow">A little more space for life</span>
+            <h1 id="welcome-title">An agent.<br />A conversation.<br /><em>Your messages.</em></h1>
+            <p class="intro-copy">Plause is being built as a personal AI agent that lives in Apple Messages. Text it naturally, and keep the conversation going where you already are.</p>
+            <div class="development-note"><span class="small-dot" aria-hidden="true"></span><p id="development-note">This local console tests the conversation foundation. Checking the model configuration; Apple Messages is not connected.</p></div>
+          </div>
+          <div class="login-card">
+            <span id="signin-kicker" class="card-kicker">Sign in to Plause</span>
+            <h2>Step into the conversation.</h2>
+            <p id="signin-description">Checking the available sign-in methods.</p>
+            <p id="messages-onboarding-hint" class="control-inline-note" hidden>To connect this Messages conversation, sign in, open Account, and prepare a channel link. You will send its one-time code in Messages and separately confirm the verified channel here.</p>
+            <button id="google-signin" class="button button-primary" type="button" disabled>Review Google sign-in</button>
+            <p id="signin-status" class="control-inline-note" role="status"></p>
+            <div id="signin-link"></div>
+            <p id="signin-support" class="control-inline-note"></p>
+            <form id="login-form">
+              <label for="invite-token">Invitation key</label>
+              <input id="invite-token" name="inviteToken" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste your local invitation" required />
+              <button id="login-button" class="button button-primary" type="submit">Open conversation <span aria-hidden="true">↗</span></button>
+            </form>
+            <p id="invitation-hint" class="setup-hint">Run <code>npm run setup</code>, then find your keys in <code>.local/invitations.json</code>.</p>
+          </div>
+        </section>
+
+        <section id="conversation-view" class="conversation-layout" aria-label="Conversation console" hidden>
+          <aside class="sidebar">
+            <div>
+              <span class="eyebrow">Your space</span>
+              <h1 id="account-name" class="account-name">Your conversation</h1>
+              <p class="sidebar-description">One ongoing conversation with Plause.</p>
+            </div>
+            <nav class="control-nav" aria-label="Conversation and account controls">
+              <button type="button" data-panel="conversation" aria-current="page">Conversation</button>
+              <button type="button" data-panel="memory">Memory</button>
+              <button type="button" data-panel="reminders">Reminders</button>
+              <button type="button" data-panel="actions">Approvals &amp; calendar</button>
+              <button type="button" data-panel="account">Account</button>
+              <button id="staff-navigation" type="button" data-panel="support" hidden>Staff workspace</button>
+            </nav>
+            <div class="channel-card">
+              <div class="channel-icon" aria-hidden="true">↗</div>
+              <h2>Built for Messages.</h2>
+              <p id="channel-description">This browser is a local development console. Apple Messages is not connected. Model requests use the configured provider.</p>
+              <span id="apple-badge" class="badge badge-neutral">Checking Apple connection</span>
+              <button type="button" class="text-button" data-panel="account">Link or manage Messages</button>
+            </div>
+            <div class="system-info" aria-label="Environment status">
+              <span class="eyebrow">Connections</span>
+              <div><span>Environment</span><span id="environment-value">Checking</span></div>
+              <div><span>Model</span><span id="model-value">Checking</span></div>
+              <div><span>Messaging</span><span id="messaging-value">Checking</span></div>
+              <div><span>Research</span><span id="research-value">Checking</span></div>
+            </div>
+            <div class="sidebar-bottom">
+              <p id="support-coverage">Need a person? Requesting support pauses automated replies. Checking support coverage.</p>
+              <button id="support-button" class="button button-secondary" type="button">Request support</button>
+            </div>
+          </aside>
+
+          <div id="conversation-panel" class="conversation-panel">
+            <header class="conversation-header">
+              <div class="conversation-heading"><span class="avatar" aria-hidden="true">p.</span><div><h2>Plause</h2><p id="conversation-status">Loading your conversation</p></div></div>
+              <span id="mode-badge" class="badge badge-neutral">Loading</span>
+            </header>
+            <div id="handoff-banner" class="handoff-banner" hidden><p><strong>Automated replies are paused.</strong> Your messages remain available for authorized support. Availability depends on the stated support coverage. <span id="handoff-resume-note">Resume permissions are being checked.</span></p><button id="return-button" class="text-button" type="button" hidden disabled>Resume agent</button></div>
+            <div id="message-scroll" class="message-scroll" tabindex="0" aria-label="Conversation messages">
+              <div id="empty-state" class="empty-state"><span class="empty-symbol" aria-hidden="true">✳</span><h3>A conversation starts here.</h3><p>Try remember: I prefer tea. Send memories to view saved facts, or memory help for controls. You can also request support to pause automated replies.</p><button id="first-message-button" class="suggestion" type="button">What can you help me with? <span aria-hidden="true">↗</span></button></div>
+              <ol id="messages" class="messages" aria-label="Messages"></ol>
+            </div>
+            <div class="composer-area">
+              <form id="message-form" class="composer">
+                <label class="visually-hidden" for="message-input">Message Plause</label>
+                <textarea id="message-input" name="text" rows="1" maxlength="4000" placeholder="Message Plause…" required></textarea>
+                <button id="send-button" class="send-button" type="submit" aria-label="Send message"><span aria-hidden="true">↑</span></button>
+              </form>
+              <p id="composer-caption" class="composer-caption">Local prototype · Checking model · Enter to send, Shift + Enter for a new line</p>
+            </div>
+          </div>
+          <section id="control-panel" class="control-panel" aria-labelledby="control-title" hidden>
+            <header class="control-header"><div><span class="eyebrow">Your controls</span><h2 id="control-title" tabindex="-1">Account</h2></div><div class="control-header-buttons"><button id="refresh-controls" class="text-button" type="button">Refresh</button><button class="text-button" data-panel="conversation" type="button">Back to conversation</button></div></header>
+            <p id="control-status" class="control-status" role="status" aria-live="polite"></p>
+            <div id="control-body" class="control-body"></div>
+          </section>
+        </section>
+        <p id="feedback" class="feedback" role="status" aria-live="polite" hidden></p>
+      </main>
+      <footer class="page-footer"><span>Make room for what matters.</span><span id="server-status"><span class="status-dot" aria-hidden="true"></span>Checking local server</span></footer>
+    </div>
+  </body>
+</html>

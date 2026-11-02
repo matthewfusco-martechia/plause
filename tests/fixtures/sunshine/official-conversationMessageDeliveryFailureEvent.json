@@ -1,0 +1,45 @@
+{
+  "app": {
+    "id": "5ebee0975ac5304b664a12fa"
+  },
+  "webhook": {
+    "id": "5f4eaef81e3dcc117c7ba48a",
+    "version": "v2"
+  },
+  "events": [
+    {
+      "id": "5f74a0d52b5315fc007e798a",
+      "createdAt": "2020-09-30T15:14:29.834Z",
+      "type": "conversation:message:delivery:failure",
+      "payload": {
+        "conversation": {
+          "id": "f52b01137aa6c250bc7251fa",
+          "type": "personal",
+          "activeSwitchboardIntegration": {
+            "id": "5eecde2dcdbffb08f5c3ed37",
+            "name": "bot",
+            "integrationId": "5f11a650e4e987667c2051d1",
+            "integrationType": "custom"
+          }
+        },
+        "user": {
+          "id": "26508c10541a4b0ff472e5e2",
+          "externalId": "912382197",
+          "authenticated": false
+        },
+        "destination": {
+          "type": "twilio",
+          "integrationId": "5ecc061987d4d413774a8131"
+        },
+        "message": {
+          "id": "5f74be6256be263abf0ffd5f"
+        },
+        "isFinalEvent": true,
+        "error": {
+          "code": "uncategorized_error",
+          "message": "Unsupported message type `form`"
+        }
+      }
+    }
+  ]
+}

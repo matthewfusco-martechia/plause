@@ -1,0 +1,196 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  LinqDeliveryError,
+  linqOtpFailure,
+  readLinqOnboardingPhoneNumber,
+  sendLinqText,
+} from "@db/services/auth/linq";
+
+interface DirectLinqTestConfiguration {
+  LINQ_API_KEY: string | undefined;
+  LINQ_PHONE_NUMBER: string | undefined;
+}
+
+const configuration = vi.hoisted(() => {
+  const value: DirectLinqTestConfiguration = {
+    LINQ_API_KEY: "test-token",
+    LINQ_PHONE_NUMBER: "+12025550123",
+  };
+  return value;
+});
+vi.mock("@shared/environment", () => ({ env: configuration }));
+
+describe("Linq delivery", () => {
+  beforeEach(() => {
+    configuration.LINQ_API_KEY = "test-token";
+    configuration.LINQ_PHONE_NUMBER = "+12025550123";
+  });
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("uses the direct API key and sends from the configured line", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await sendLinqText({
+      idempotencyKey: "otp-idempotency-key",
+      message: "Your code is 123456.",
+      to: "+12025550123",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe("https://api.linqapp.com/api/partner/v3/chats");
+    expect(init?.headers).toMatchObject({
+      Authorization: "Bearer test-token",
+      "Idempotency-Key": "otp-idempotency-key",
+    });
+    expect(init?.method).toBe("POST");
+  });
+
+  it("uses only the configured onboarding line without querying available lines", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await readLinqOnboardingPhoneNumber()).toBe("+12025550123");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves onboarding unavailable without a configured direct line", async () => {
+    configuration.LINQ_PHONE_NUMBER = undefined;
+    expect(await readLinqOnboardingPhoneNumber()).toBeUndefined();
+  });
+
+  it("preserves diagnostics from Linq's current error envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json(
+          {
+            error: {
+              code: 2015,
+              message: "no eligible sending line available",
+              status: 409,
+            },
+            success: false,
+            trace_id: "trace-123",
+          },
+          { status: 409 }
+        )
+      )
+    );
+
+    const error = await captureLinqDeliveryError();
+    expect(error).toMatchObject({
+      code: 2015,
+      linqMessage: "no eligible sending line available",
+      status: 409,
+      traceId: "trace-123",
+    });
+    expect(error.message).toContain("trace_id trace-123");
+  });
+
+  it("preserves diagnostics from Linq's legacy error envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json(
+          {
+            code: 2024,
+            message: "Recipient opted out",
+            trace_id: "legacy-trace",
+          },
+          { status: 403 }
+        )
+      )
+    );
+
+    const error = await captureLinqDeliveryError();
+
+    expect(error).toMatchObject({
+      code: 2024,
+      linqMessage: "Recipient opted out",
+      status: 403,
+      traceId: "legacy-trace",
+    });
+  });
+
+  it("falls back to Linq's trace response header", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json(
+          {
+            error: { code: 2008, message: "Recipient not allowed" },
+            success: false,
+          },
+          { headers: { "x-trace-id": "trace-header" }, status: 403 }
+        )
+      )
+    );
+
+    const error = await captureLinqDeliveryError();
+
+    expect(error).toMatchObject({
+      code: 2008,
+      linqMessage: "Recipient not allowed",
+      status: 403,
+      traceId: "trace-header",
+    });
+  });
+
+  it.each([
+    [2006, "LINQ_SENDING_LINE_NOT_AUTHORIZED", "API token"],
+    [2008, "LINQ_RECIPIENT_NOT_VERIFIED", "first-time sign-in steps"],
+    [2024, "LINQ_RECIPIENT_OPTED_OUT", "opted out"],
+    [2027, "LINQ_REPUTATION_BLOCKED", "messaging reputation"],
+  ])("maps Linq code %i to actionable OTP copy", (code, expectedCode, copy) => {
+    const failure = linqOtpFailure(
+      new LinqDeliveryError({ code, status: 409 })
+    );
+
+    expect(failure.code).toBe(expectedCode);
+    expect(failure.message).toContain(copy);
+  });
+
+  it("explains how to verify a newly provisioned sending line", () => {
+    const failure = linqOtpFailure(
+      new LinqDeliveryError({
+        code: 2015,
+        linqMessage: "no eligible sending line available",
+        status: 409,
+      })
+    );
+
+    expect(failure.code).toBe("LINQ_SENDING_LINE_UNAVAILABLE");
+    expect(failure.message).toContain("line's health");
+  });
+
+  it("does not mislabel unrelated Linq conflicts as verification failures", () => {
+    const failure = linqOtpFailure(
+      new LinqDeliveryError({
+        code: 2015,
+        linqMessage: "Operation conflicts with current state",
+        status: 409,
+      })
+    );
+
+    expect(failure.code).toBe("LINQ_DELIVERY_FAILED");
+  });
+});
+
+async function captureLinqDeliveryError(): Promise<LinqDeliveryError> {
+  try {
+    await sendLinqText({
+      idempotencyKey: "otp-idempotency-key",
+      message: "Your code is 123456.",
+      to: "+12025550123",
+    });
+  } catch (error) {
+    if (error instanceof LinqDeliveryError) return error;
+    throw error;
+  }
+  throw new Error("Expected Linq delivery to fail.");
+}

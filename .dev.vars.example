@@ -1,0 +1,42 @@
+# npm run setup creates actual random values locally. Never use example values as secrets.
+CONTENT_ENCRYPTION_KEY=<base64-encoded-random-32-bytes>
+MOCK_WEBHOOK_SECRET=<random-local-webhook-secret>
+OPERATOR_TOKEN=<random-local-operator-secret>
+
+# Configure via npm run configure:model. Never paste a real API key in chat.
+# Explicit local opt-in is required before provider requests are allowed.
+MODEL_PROVIDER=mock
+LIVE_MODEL_ENABLED=false
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-6-luna
+MODEL_MAX_INPUT_TOKENS=4096
+MODEL_MAX_OUTPUT_TOKENS=600
+MODEL_TIMEOUT_MS=20000
+MODEL_USER_MONTHLY_BUDGET_MICRO_USD=5000000
+MODEL_GLOBAL_MONTHLY_BUDGET_MICRO_USD=50000000
+
+# Read-only research remains disabled until explicitly configured locally.
+SEARCH_PROVIDER=disabled
+LIVE_SEARCH_ENABLED=false
+TAVILY_API_KEY=
+LIVE_GOOGLE_CALENDAR_ENABLED=false
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:8787/api/calendar/google/callback
+SEARCH_USER_DAILY_LIMIT=20
+SEARCH_GLOBAL_DAILY_LIMIT=500
+
+# Cloud sign-in is separate from Calendar OAuth. Do not reuse local secrets in cloud.
+# Configure real redirect origins and protected cloud secret JSON with configure:cloud.
+AUTH_GOOGLE_ENABLED=false
+AUTH_SIGNUP_ENABLED=false
+AUTH_GOOGLE_CLIENT_ID=
+AUTH_GOOGLE_CLIENT_SECRET=
+LIVE_MESSAGING_ENABLED=false
+APPLE_CHANNEL_APPROVED=false
+APPLE_PROACTIVE_ENABLED=false
+ONBOARDING_MESSAGES_ENABLED=false
+ONBOARDING_GLOBAL_DAILY_LIMIT=500
+APPLE_BUSINESS_ID=
+TYPING_INDICATORS_ENABLED=false
+SUPPORT_COVERAGE_ENABLED=false

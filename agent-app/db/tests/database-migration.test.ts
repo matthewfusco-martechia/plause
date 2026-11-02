@@ -1,16 +1,26 @@
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const databases: PGlite[] = [];
+let preparedDatabase: PGlite | undefined;
+
+beforeEach(async () => {
+  const database = new PGlite();
+  databases.push(database);
+  // Keep cold WebAssembly/Postgres startup outside each migration assertion deadline.
+  await database.waitReady;
+  preparedDatabase = database;
+});
 
 afterEach(async () => {
+  preparedDatabase = undefined;
   await Promise.all(databases.splice(0).map((database) => database.close()));
 });
 
 describe("database migrations", () => {
   it("creates a validated schema and keeps adoption migrations idempotent", async () => {
-    const database = createDatabase();
+    const database = readyDatabase();
 
     await applyMigration(database, "0000_fluffy_the_spike.sql");
     await applyMigration(database, "0001_better-auth.sql");
@@ -82,7 +92,7 @@ describe("database migrations", () => {
   }, 15_000);
 
   it("reconciles the pre-merge reply-anchor migration", async () => {
-    const database = createDatabase();
+    const database = readyDatabase();
     await database.exec(`
       CREATE TABLE chats (session_id text PRIMARY KEY);
       CREATE TABLE scheduled_agent_jobs (
@@ -108,7 +118,7 @@ describe("database migrations", () => {
   });
 
   it("preserves legacy rows while enforcing constraints for new writes", async () => {
-    const database = createDatabase();
+    const database = readyDatabase();
     await database.exec(legacyRuntimeSchema);
     await database.exec(`
       INSERT INTO vault_items
@@ -175,7 +185,7 @@ describe("database migrations", () => {
   }, 15_000);
 
   it("adopts existing Better Auth tables without changing their rows", async () => {
-    const database = createDatabase();
+    const database = readyDatabase();
     await database.exec(legacyAuthSchema);
     await database.exec(`
       INSERT INTO "user" (
@@ -297,10 +307,10 @@ describe("database migrations", () => {
   }, 15_000);
 });
 
-function createDatabase() {
-  const database = new PGlite();
-  databases.push(database);
-  return database;
+function readyDatabase() {
+  if (!preparedDatabase)
+    throw new Error("The migration database is not ready.");
+  return preparedDatabase;
 }
 
 async function applyMigration(database: PGlite, name: string) {

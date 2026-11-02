@@ -55,6 +55,11 @@ jobs:
           package-manager-cache: false
       - run: npm install --global --ignore-scripts pnpm@11.24.0
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify and expose local tools
+        run: |
+          test -x node_modules/.bin/turbo
+          node node_modules/turbo/bin/turbo --version
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
       - run: pnpm check
       - run: pnpm build -- --webpack
         env:

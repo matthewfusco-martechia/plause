@@ -25,6 +25,7 @@
     "@trpc/client": "11.18.0",
     "@trpc/react-query": "11.18.0",
     "@trpc/server": "11.18.0",
+    "@workflow/world-postgres": "5.0.4",
     "ai": "^7.0.159",
     "better-auth": "1.7.5",
     "class-variance-authority": "0.7.1",
@@ -48,6 +49,7 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20261030.1",
     "@electric-sql/pglite": "^0.5.8",
     "@linqapp/chat-sdk-adapter": "0.5.1",
     "@next/env": "16.3.3",
@@ -103,6 +105,7 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "knip": "knip --config knip.config.ts",
+    "model:authorize-continuation": "tsx scripts/authorize-model-continuation.ts",
     "lint": "turbo run lint:app",
     "lint:app": "oxlint . --deny-warnings",
     "lint:fix": "oxlint . --fix",
@@ -117,6 +120,8 @@
     "dev:eve": "eve dev",
     "start:eve": "eve start",
     "test:runtime": "node --experimental-strip-types scripts/run-runtime-smoke.ts",
+    "test:hosting": "node --experimental-strip-types ops/cloudflare/run-smoke.ts",
+    "test:recovery": "node --experimental-strip-types scripts/run-recovery-smoke.ts",
     "check:config": "node --env-file-if-exists=.env.local --experimental-strip-types scripts/check-configuration.ts"
   },
   "version": "0.0.0",

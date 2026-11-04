@@ -52,7 +52,7 @@ export async function listCalendarEvents(
     timeMin: string;
   }
 ) {
-  return withCalendar(ctx, async (client) => {
+  return withCalendar(ctx, "calendar.read", async (client) => {
     const { data } = await client.events.list(
       {
         calendarId: input.calendarId,
@@ -79,7 +79,7 @@ export async function checkCalendarAvailability(
     timezone: string;
   }
 ) {
-  return withCalendar(ctx, async (client) => {
+  return withCalendar(ctx, "calendar.availability", async (client) => {
     const { data } = await client.freebusy.query(
       {
         requestBody: {
@@ -154,9 +154,12 @@ export async function createCalendarEvent(
 
 function withCalendar<T>(
   ctx: ToolContext,
+  capability: "calendar.read" | "calendar.availability",
   execute: (client: ReturnType<typeof calendar>) => Promise<T>
 ) {
-  return withGoogleAuth(ctx, (auth) =>
-    execute(calendar({ auth, version: "v3" }))
+  return withGoogleAuth(
+    ctx,
+    (auth) => execute(calendar({ auth, version: "v3" })),
+    capability
   );
 }

@@ -25,6 +25,7 @@ import backgroundReplyTargetHook from "@agent/hooks/background-reply-target";
 import {
   registerBackgroundReplyTarget,
   resolveLinqReplyTarget,
+  resolveInkboxReplyTarget,
 } from "@agent/lib/reply-targets";
 import { hookContextFor } from "@tests/helpers/hook-context";
 import { viewOf } from "@tests/helpers/session-view";
@@ -34,6 +35,90 @@ beforeEach(() => {
 });
 
 describe("reply targets", () => {
+  it("binds Inkbox current and background reply handles to the full identity/conversation token", () => {
+    const conversationId =
+      "inkbox:10000000-0000-4000-8000-000000000001:20000000-0000-4000-8000-000000000001:40000000-0000-4000-8000-000000000001";
+    const messageId = "30000000-0000-4000-8000-000000000001";
+    const seed = linqAuth(messageId, conversationId);
+    if (!seed.current) throw new Error("Missing fixture principal");
+    const auth = {
+      ...seed,
+      current: {
+        ...seed.current,
+        attributes: {
+          ...seed.current.attributes,
+          conversationChannel: "inkbox",
+          inkboxMessageId: messageId,
+        },
+      },
+    };
+    expect(resolveInkboxReplyTarget({ kind: "current" }, auth)).toEqual({
+      conversationId,
+      messageId,
+    });
+    expect(resolveLinqReplyTarget({ kind: "current" }, auth)).toBeUndefined();
+    registerBackgroundReplyTarget("inkbox-task", auth);
+    expect(
+      resolveInkboxReplyTarget(
+        { kind: "task", id: "inkbox-task" },
+        { current: null, initiator: auth.current }
+      )
+    ).toEqual({ conversationId, messageId });
+    const other = {
+      ...auth,
+      current: {
+        ...auth.current,
+        attributes: {
+          ...auth.current.attributes,
+          conversationId: conversationId.replace("10000000-", "90000000-"),
+        },
+      },
+    };
+    expect(
+      resolveInkboxReplyTarget({ kind: "task", id: "inkbox-task" }, other)
+    ).toBeUndefined();
+  });
+
+  it("resolves only the Inkbox automation anchor and rejects malformed tokens", () => {
+    const seed = scheduledReportAuth("old-linq-anchor");
+    if (!seed.current) throw new Error("Missing fixture principal");
+    const messageId = "30000000-0000-4000-8000-000000000001";
+    const auth = {
+      ...seed,
+      current: {
+        ...seed.current,
+        attributes: {
+          ...seed.current.attributes,
+          conversationChannel: "inkbox",
+          conversationId:
+            "inkbox:10000000-0000-4000-8000-000000000001:20000000-0000-4000-8000-000000000001:40000000-0000-4000-8000-000000000001",
+          inkboxReplyAnchorMessageId: messageId,
+        },
+      },
+    };
+    expect(
+      resolveInkboxReplyTarget(
+        { kind: "automation", id: "00000000-0000-4000-8000-000000000003" },
+        auth
+      )?.messageId
+    ).toBe(messageId);
+    const malformed = {
+      ...auth,
+      current: {
+        ...auth.current,
+        attributes: {
+          ...auth.current.attributes,
+          conversationId: "inkbox:arbitrary",
+        },
+      },
+    };
+    expect(
+      resolveInkboxReplyTarget(
+        { kind: "automation", id: "00000000-0000-4000-8000-000000000003" },
+        malformed
+      )
+    ).toBeUndefined();
+  });
   it("resolves the current Linq message without exposing its provider ID", () => {
     expect(
       resolveLinqReplyTarget({ kind: "current" }, linqAuth("message-1"))

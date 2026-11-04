@@ -12,6 +12,12 @@ adds `replyToMessageId` to the bundled adapter's `LinqSendOptions` and forwards
 it to Linq as `reply_to`, matching the installed adapter patch above. Remove it
 when an Eve release's bundled adapter supports native replies.
 
+The delegated approval routing hunk preserves delivery metadata for each
+child when the parent retains part of the same reply. The first child keeps
+the original ID for an exclusive handoff. Shared replies receive stable
+child IDs so retries keep their deduplication keys. The offline browser
+workflow fixture exercises this with an approval carrying parent context.
+
 The earlier `task_cancel` hunk is no longer needed: Eve 1.0 provides
 `eve__task_cancel` itself for agents with task tools, including the resumable
 `run_browser` tool.

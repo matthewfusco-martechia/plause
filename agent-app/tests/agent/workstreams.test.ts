@@ -32,6 +32,7 @@ import {
 } from "@shared/workstreams/schema";
 
 const client = new PGlite();
+await client.waitReady;
 const database = drizzle(client, { schema });
 const alice = { userId: "alice", workspaceId: "workspace-alice" };
 const bob = { userId: "bob", workspaceId: "workspace-bob" };

@@ -10,7 +10,7 @@ import {
   waitForScheduledAgentRunInput,
 } from "@db/services/scheduled-agent-jobs";
 
-const workerRuntimeLimitMs = 6 * 60 * 60_000;
+const workerRuntimeLimitMs = 15 * 60_000;
 
 export default defineHook({
   events: {

@@ -7,6 +7,22 @@ import * as schema from "@db/schema";
 import { accessScopeForUser } from "@shared/identity/access-scope";
 import type { ConnectionPrincipal } from "eve/connections";
 
+// Set the loopback fixture environment before service imports evaluate the validated environment.
+vi.stubEnv("NODE_ENV", "development");
+vi.stubEnv("BETTER_AUTH_URL", "http://localhost:3000");
+vi.stubEnv("LINK_CLIENT_ID", "test-link-client");
+vi.stubEnv("LINK_CLIENT_SECRET", "test-link-secret");
+vi.stubEnv("STRIPE_PUBLISHABLE_KEY", "pk_test_link");
+
+const { getAuth } = await import("@db/services/auth");
+const link = await import("@db/services/auth/link");
+const { GET, POST } = await import("@app/api/link/route");
+const { linkAuth } = await import("@agent/lib/link-auth");
+
+// Finish cold service-module loading and the sole Postgres/Wasm startup before the timed OAuth lifecycle.
+const client = new PGlite();
+await client.waitReady;
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -15,14 +31,8 @@ afterEach(() => {
 });
 
 describe("Link wallet integration", () => {
-  // Include PGlite startup and the full OAuth lifecycle on slower CI runners.
+  // Keep the full OAuth lifecycle under its existing 15-second deadline; cold fixture initialization is already complete.
   it("connects an existing phone user, isolates callbacks, refreshes encrypted tokens, and revokes on disconnect", async () => {
-    vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("BETTER_AUTH_URL", "http://localhost:3000");
-    vi.stubEnv("LINK_CLIENT_ID", "test-link-client");
-    vi.stubEnv("LINK_CLIENT_SECRET", "test-link-secret");
-    vi.stubEnv("STRIPE_PUBLISHABLE_KEY", "pk_test_link");
-    const client = new PGlite();
     try {
       await client.exec(
         await readFile(
@@ -41,10 +51,6 @@ describe("Link wallet integration", () => {
       // SAFETY: PGlite implements the shared Drizzle query-builder and transaction API used by these services.
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Only the database driver changes in this integration test.
       vi.spyOn(Database, "db", "get").mockReturnValue(database as never);
-      const { getAuth } = await import("@db/services/auth");
-      const link = await import("@db/services/auth/link");
-      const { GET, POST } = await import("@app/api/link/route");
-      const { linkAuth } = await import("@agent/lib/link-auth");
       const auth = await getAuth();
       const signedIn = await auth.api.verifyPhoneNumber({
         body: { phoneNumber: "+12025550123", code: "123456" },

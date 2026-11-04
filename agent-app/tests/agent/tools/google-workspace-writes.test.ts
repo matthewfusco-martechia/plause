@@ -262,6 +262,7 @@ describe("Google Workspace write capability", () => {
 
   it("hides write tools by default while exposing read tools", async () => {
     expect(await names(gmailTools)).toEqual([
+      "gmail-read-draft",
       "gmail-read-thread",
       "gmail-search",
     ]);

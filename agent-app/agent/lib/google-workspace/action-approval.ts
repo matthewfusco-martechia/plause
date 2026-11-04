@@ -6,6 +6,7 @@ import { z } from "zod";
 import { scopeFromPrincipal } from "@agent/lib/principal-scope";
 import {
   executeGoogleAction,
+  googleActionCapability,
   GoogleActionApprovalError,
   readGoogleActionGrant,
   requestGoogleActionApproval,
@@ -69,7 +70,10 @@ export function googleWriteApproval<T>(
           toolName,
           input
         );
-        const version = await readGoogleWorkspaceGrantVersion(binding);
+        const version = await readGoogleWorkspaceGrantVersion(
+          binding,
+          googleActionCapability(toolName)
+        );
         await requestGoogleActionApproval(binding, version);
         ctx.abortSignal.throwIfAborted();
         return "user-approval";
@@ -103,7 +107,10 @@ export function googleWriteApproval<T>(
           toolName,
           input
         );
-        const version = await readGoogleWorkspaceGrantVersion(binding);
+        const version = await readGoogleWorkspaceGrantVersion(
+          binding,
+          googleActionCapability(toolName)
+        );
         await respondGoogleActionApproval(
           binding,
           version,
@@ -155,6 +162,7 @@ export async function withApprovedGoogleWrite<T>(
         ctx.abortSignal.throwIfAborted();
         return execute(auth);
       }),
+    googleActionCapability(toolName),
     grantVersion
   );
 }

@@ -8,9 +8,11 @@ import { env } from "@shared/environment";
 import { claimInternalRequest } from "@db/services/internal-requests";
 
 export type ScheduledInternalPath =
+  | "/internal/schedules/tick"
   | "/internal/scheduled-run/report"
   | "/internal/scheduled-run/respond"
-  | "/internal/linq/dispatch";
+  | "/internal/linq/dispatch"
+  | "/internal/inkbox/dispatch";
 
 const MAX_BODY_BYTES = 65_536;
 const MAX_CLOCK_SKEW_SECONDS = 300;
@@ -45,12 +47,15 @@ export function signScheduledRequest(
   if (!secret) throw new Error("INTERNAL_SERVICE_SECRET is not configured.");
   const timestamp = String(Math.floor(Date.now() / 1000));
   const requestId = randomUUID();
-  return new Headers({
+  const headers = new Headers({
     "content-type": "application/json",
     [timestampHeader]: timestamp,
     [requestIdHeader]: requestId,
     [signatureHeader]: `v1=${signature(secret, path, body, timestamp, requestId)}`,
   });
+  if (env.PLAUSE_EDGE_INTERNAL_TOKEN)
+    headers.set("authorization", `Bearer ${env.PLAUSE_EDGE_INTERNAL_TOKEN}`);
+  return headers;
 }
 
 // Authentication is independent of Vercel and never accepts a browser session,
@@ -68,8 +73,10 @@ export async function authenticateScheduledRequest(
     request.method !== "POST" ||
     url.search ||
     (path !== "/internal/scheduled-run/report" &&
+      path !== "/internal/schedules/tick" &&
       path !== "/internal/scheduled-run/respond" &&
-      path !== "/internal/linq/dispatch")
+      path !== "/internal/linq/dispatch" &&
+      path !== "/internal/inkbox/dispatch")
   )
     return rejection(401);
   const timestamp = request.headers.get(timestampHeader);
@@ -97,7 +104,10 @@ export async function authenticateScheduledRequest(
         length += chunk.byteLength;
         if (
           length >
-          (path === "/internal/linq/dispatch" ? 262_144 : MAX_BODY_BYTES)
+          (path === "/internal/linq/dispatch" ||
+          path === "/internal/inkbox/dispatch"
+            ? 262_144
+            : MAX_BODY_BYTES)
         )
           return rejection(413);
         chunks.push(chunk);

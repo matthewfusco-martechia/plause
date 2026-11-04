@@ -123,6 +123,12 @@ describe("direct model budget transport", () => {
       tools: payload.tools,
     });
     expect(await sentRequest(transport.mock.calls, 1).json()).toEqual(payload);
+    expect(
+      sentRequest(transport.mock.calls, 1).headers.get("x-client-request-id")
+    ).toMatch(/^[a-f0-9]{64}$/u);
+    expect(
+      sentRequest(transport.mock.calls, 0).headers.has("x-client-request-id")
+    ).toBe(false);
     expect(ledger.reserve).toHaveBeenCalledWith(
       expect.objectContaining({ reservedMicroUsd: 1_025 })
     );
@@ -212,12 +218,47 @@ describe("direct model budget transport", () => {
   });
 
   it("blocks an unknown outcome before preflight or a paid retry", async () => {
-    ledger.read.mockResolvedValue(attempt({ status: "unknown" }));
+    ledger.read.mockResolvedValue(
+      attempt({
+        status: "unknown",
+        continuationAuthorizedAt: new Date(),
+        continuationExpiresAt: new Date(Date.now() + 60_000),
+        continuationAuthorizationHash: "a".repeat(64),
+      })
+    );
     const transport = vi.spyOn(globalThis, "fetch");
     await expect(request(budgetedOpenAIFetch(context, policy))).rejects.toThrow(
       "previous model request is unresolved"
     );
     expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("retains safe provider diagnostics without exposing rejected content or retrying", async () => {
+    const privateBody = "private provider body and credential must not appear";
+    const transport = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(counted())
+      .mockResolvedValueOnce(
+        new Response(privateBody, {
+          status: 429,
+          headers: { "x-request-id": "req_fixture_123" },
+        })
+      );
+    let message = "";
+    try {
+      await request(budgetedOpenAIFetch(context, policy));
+    } catch (error) {
+      if (error instanceof Error) message = error.message;
+    }
+    expect(message).toContain('"phase":"response_headers"');
+    expect(message).toContain('"providerRequestId":"req_fixture_123"');
+    expect(message).toContain('"httpStatus":429');
+    expect(message).not.toContain(privateBody);
+    expect(message).not.toContain("test-openai-key");
+    expect(message).not.toContain("Fictional request");
+    expect(transport).toHaveBeenCalledTimes(2);
+    expect(ledger.hold).toHaveBeenCalledOnce();
+    expect(ledger.settle).not.toHaveBeenCalled();
   });
 
   it("rechecks a scheduled lease after decrypting a cached response", async () => {
@@ -394,6 +435,9 @@ function attempt(overrides: Partial<ModelAttempt> = {}): ModelAttempt {
     outputTokens: null,
     status: "reserved",
     encryptedResult: null,
+    continuationAuthorizedAt: null,
+    continuationExpiresAt: null,
+    continuationAuthorizationHash: null,
     createdAt: new Date("2026-11-02T00:00:00Z"),
     settledAt: null,
     ...overrides,

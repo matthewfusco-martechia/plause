@@ -21,13 +21,15 @@ const renderForm = (form: ReactElement) =>
   );
 
 describe("phone OTP errors", () => {
-  it("shows actionable Linq errors", () => {
+  it("shows fixed actionable connection errors without echoing server text", () => {
     expect(
       phoneOtpErrorMessage({
-        code: "LINQ_RECIPIENT_NOT_VERIFIED",
-        message: "Send a message to the Linq phone number, then try again.",
+        code: "MESSAGING_CONNECT_REQUIRED",
+        message: "raw private provider secret",
       })
-    ).toBe("Send a message to the Linq phone number, then try again.");
+    ).toBe(
+      "Complete the Messages connection steps, then send hi to Plause from this phone before requesting a code."
+    );
   });
 
   it("does not expose unrelated server errors", () => {
@@ -43,36 +45,59 @@ describe("phone OTP errors", () => {
     const html = renderForm(
       createElement(PhoneOtpAuthForm, {
         callbackUrl: "/",
-        linqPhoneNumber: "+12025550123",
+        onboarding: { provider: "linq", phoneNumber: "+12025550123" },
       })
     );
 
     expect(html).toContain("First time signing in?");
-    expect(html).toContain("Linq requires one message");
-    expect(html).toContain("Send any message");
+    expect(html).toContain(
+      "A Messages connection alone does not create your Plause account"
+    );
+    expect(html).toContain("hi</code>");
     expect(html).toContain("Return here and select Send code");
     expect(html).toContain('href="sms:+12025550123"');
-    expect(html).toContain("Text Linq in Messages");
+    expect(html).toContain("Open Messages");
   });
 
   it("keeps the required flow visible when the number cannot be resolved", () => {
     const html = renderForm(
       createElement(PhoneOtpAuthForm, {
         callbackUrl: "/",
-        linqPhoneNumber: undefined,
+        onboarding: undefined,
       })
     );
 
     expect(html).toContain("First time signing in?");
-    expect(html).toContain("Find the Linq number in Vercel Connect");
+    expect(html).toContain("Connection details are unavailable");
+    expect(html).not.toContain("Vercel");
     expect(html).not.toContain("sms:");
     const error = phoneOtpErrorMessage({
-      code: "LINQ_SENDING_LINE_UNAVAILABLE",
+      code: "MESSAGING_UNAVAILABLE",
       message:
         "No Linq line is currently eligible. Complete the first-time sign-in steps above or review line health in Linq.",
     });
-    expect(error).toContain("first-time sign-in steps above");
+    expect(error).toContain("Review the Messages connection");
     expect(error).not.toContain("button");
+  });
+
+  it("shows the Inkbox router connect command followed by hi in the connected conversation", () => {
+    const html = renderForm(
+      createElement(PhoneOtpAuthForm, {
+        callbackUrl: "/",
+        onboarding: {
+          provider: "inkbox",
+          phoneNumber: "+12025550123",
+          connectCommand: "connect @plause",
+        },
+      })
+    );
+    expect(html).toContain("connect @plause");
+    expect(html).toContain(
+      "then send <code>hi</code> to the connected Plause conversation"
+    );
+    expect(html).toContain("sms:+12025550123?&amp;body=connect%20%40plause");
+    expect(html).toContain("Return here and select Send code");
+    expect(html).not.toContain("Linq");
   });
 
   it("does not show Linq setup during local sign-in", () => {

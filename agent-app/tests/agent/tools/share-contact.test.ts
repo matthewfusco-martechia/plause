@@ -61,6 +61,7 @@ vi.mock("@shared/environment", async (importOriginal) => {
     env: {
       ...original.env,
       LINQ_API_KEY: "linq-test-key",
+      MESSAGING_PROVIDER: "linq",
       get LINQ_PHONE_NUMBER() {
         return controls.phone;
       },
@@ -72,7 +73,7 @@ beforeEach(() => {
   for (const reset of controls.reset) reset();
   vi.clearAllMocks();
   controls.phone = "+12025550123";
-  controls.assertUser.mockReset().mockResolvedValue(undefined);
+  controls.assertUser.mockReset().mockResolvedValue("+12025550123");
   controls.readPhone.mockResolvedValue("+12025550456");
   controls.apiKey.mockResolvedValue("linq-test-key");
   controls.fetch.mockReset().mockImplementation(async () =>

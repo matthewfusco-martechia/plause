@@ -18,7 +18,9 @@ export const internalRequestReceipts = pgTable(
       enum: [
         "/internal/scheduled-run/report",
         "/internal/scheduled-run/respond",
+        "/internal/schedules/tick",
         "/internal/linq/dispatch",
+        "/internal/inkbox/dispatch",
       ],
     }).notNull(),
     expiresAt: timestamp("expires_at", {
@@ -35,7 +37,7 @@ export const internalRequestReceipts = pgTable(
     ),
     check(
       "internal_request_receipts_path_check",
-      sql`${table.path} IN ('/internal/scheduled-run/report', '/internal/scheduled-run/respond', '/internal/linq/dispatch')`
+      sql`${table.path} IN ('/internal/scheduled-run/report', '/internal/scheduled-run/respond', '/internal/linq/dispatch', '/internal/inkbox/dispatch', '/internal/schedules/tick')`
     ),
   ]
 );

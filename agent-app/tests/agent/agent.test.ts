@@ -40,6 +40,25 @@ beforeEach(() => {
 });
 
 describe("root agent model resolution", () => {
+  it("keeps the captured short-turn context below compaction while preserving the input cap", async () => {
+    services.isActive.mockResolvedValue(true);
+    const model = await resolveModel();
+    const observedShortTurnTokens = 13_796;
+    const checkpointHeadroom = 1_000;
+    const window = model.modelContextWindowTokens;
+    const threshold = agent.compaction.threshold;
+    if (!window || !threshold)
+      throw new Error("Expected an explicit compaction policy");
+    expect(observedShortTurnTokens + checkpointHeadroom).toBeLessThan(
+      window * threshold
+    );
+    expect(19_500 + checkpointHeadroom).toBeGreaterThan(window * threshold);
+    expect(services.budgetFetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ maxInputTokens: 20_000 })
+    );
+  });
+
   it("accepts a valid retry lease forwarded into an older Eve session", async () => {
     services.isActive.mockImplementation(async (_runId, leaseToken) => {
       return leaseToken === retryLeaseToken;

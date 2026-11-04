@@ -237,22 +237,23 @@ describe("browser action authority", () => {
       })
     );
     const approval = manageBrowsers.approval;
-    if (!(approval instanceof Function))
+    if (!approval || approval instanceof Function)
       throw new Error("Missing lifecycle approval.");
+    const { request } = approval;
     expect(
-      await approval({
+      await request({
         ...context(),
         toolInput: { action: "create", start_url: "https://shop.example" },
       })
     ).toBe("user-approval");
     expect(
-      await approval({
+      await request({
         ...context(),
         toolInput: { action: "delete", session_id: browser },
       })
     ).toBe("user-approval");
     expect(
-      await approval({
+      await request({
         ...context(),
         toolInput: { action: "get", session_id: browser },
       })

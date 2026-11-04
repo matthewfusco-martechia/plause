@@ -25,6 +25,7 @@ vi.mock("@shared/environment", async (importOriginal) => {
     ...original,
     env: {
       ...original.env,
+      MESSAGING_PROVIDER: "linq",
       PRIVATE_ALLOWED_PHONE_NUMBERS: "+15550100011",
       LINQ_API_KEY: "linq-test-api-key",
       LINQ_PHONE_NUMBER: "+15550100000",

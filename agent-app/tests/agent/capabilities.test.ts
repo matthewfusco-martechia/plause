@@ -42,8 +42,10 @@ describe("authored mode capability matrix", () => {
       "calendar-check-availability",
       "calendar-list-events",
       "contacts-search",
+      "drive-read-named-text",
       "drive-read-text",
       "drive-search",
+      "gmail-read-draft",
       "gmail-read-thread",
       "gmail-search",
       "personal_info__update",
@@ -71,6 +73,7 @@ describe("authored mode capability matrix", () => {
       "contacts-search",
       "drive-read-text",
       "drive-search",
+      "gmail-read-draft",
       "gmail-read-thread",
       "gmail-search",
     ]);

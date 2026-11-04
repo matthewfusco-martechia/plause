@@ -9,7 +9,8 @@ import { account, db, session, user, verification } from "@db";
 import { betterAuthBaseURL } from "@shared/environment/origin";
 import { env, localPhoneAuthBypassEnabled } from "@shared/environment";
 import { getInstallationSecrets } from "@db/services/installation-secrets";
-import { LinqDeliveryError, linqOtpFailure, sendLinqText } from "./linq";
+import { LinqDeliveryError, sendLinqText } from "./linq";
+import { sendInkboxPhoneCode } from "./inkbox";
 import { isE164PhoneNumber } from "@shared/identity/phone-number";
 import { isPhoneEnrollmentAllowed } from "@shared/identity/enrollment";
 
@@ -141,41 +142,65 @@ export async function sendPhoneCode({
         "This private Plause installation is not accepting this phone number.",
     });
   }
+  if (!/^\d{6}$/u.test(code))
+    throw new APIError("BAD_REQUEST", {
+      code: "INVALID_SIGN_IN_CODE",
+      message: "A valid sign-in code is required.",
+    });
+  const idempotencyKey = `auth-otp-${createHash("sha256")
+    .update(
+      JSON.stringify([
+        env.MESSAGING_PROVIDER,
+        env.MESSAGING_PROVIDER === "inkbox"
+          ? env.INKBOX_IDENTITY_ID
+          : env.LINQ_PHONE_NUMBER,
+        to,
+        code,
+      ])
+    )
+    .digest("hex")}`;
+  if (env.MESSAGING_PROVIDER === "inkbox")
+    return sendInkboxPhoneCode({ to, code, idempotencyKey });
+  if (env.MESSAGING_PROVIDER !== "linq")
+    throw new APIError("SERVICE_UNAVAILABLE", {
+      code: "MESSAGING_DISABLED",
+      message: "iMessage sign-in is disabled for this deployment.",
+    });
   if (!env.LINQ_API_KEY || !env.LINQ_PHONE_NUMBER) {
     throw new APIError("SERVICE_UNAVAILABLE", {
-      code: "LINQ_NOT_CONFIGURED",
-      message:
-        "iMessage sign-in is not configured. Set the direct Linq API credentials and sending phone number.",
+      code: "MESSAGING_NOT_CONFIGURED",
+      message: "iMessage sign-in is not configured for this deployment.",
     });
   }
 
   try {
     await sendLinqText({
-      idempotencyKey: `auth-otp-${createHash("sha256")
-        .update(`${to}\u0000${code}`)
-        .digest("hex")}`,
+      idempotencyKey,
       message: `Plause sign-in code: ${code}. Expires in 5 minutes.`,
       to,
     });
   } catch (error) {
     if (error instanceof LinqDeliveryError) {
-      const failure = linqOtpFailure(error);
       throw new APIError("BAD_GATEWAY", {
-        code: failure.code,
-        linqError: {
-          code: error.code,
-          message: error.linqMessage,
-          status: error.status,
-          trace_id: error.traceId,
-        },
-        message: failure.message,
+        code:
+          error.code === 2008
+            ? "MESSAGING_CONNECT_REQUIRED"
+            : error.code === 2024
+              ? "MESSAGING_OPTED_OUT"
+              : "MESSAGING_UNAVAILABLE",
+        message:
+          error.code === 2008
+            ? "Complete the Messages connection steps, then send hi to Plause from this phone before requesting a code."
+            : error.code === 2024
+              ? "This phone has opted out of messages. Re-enable messages before requesting a sign-in code."
+              : "The messaging line is unavailable. Review its connection before requesting another code.",
       });
     }
 
     throw new APIError("BAD_GATEWAY", {
-      code: "LINQ_UNAVAILABLE",
+      code: "MESSAGING_CODE_UNCONFIRMED",
       message:
-        "This deployment could not confirm Linq accepted the sign-in code. Check its direct API configuration before trying again.",
+        "Plause could not confirm delivery of the sign-in code. Review the Messages connection before requesting another code.",
     });
   }
 }

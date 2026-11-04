@@ -13,6 +13,7 @@ import webhook from "@agent/channels/linq-webhook";
 import { linqDigest } from "@db/services/linq-inbox";
 
 const controls = vi.hoisted(() => ({
+  provider: "linq",
   record: vi.fn<typeof Inbox.recordLinqInbound>(),
   scope: vi.fn<typeof Inbox.readLinqRelayScope>(),
   finish: vi.fn<typeof Inbox.finishLinqInbox>(),
@@ -29,6 +30,9 @@ vi.mock("@shared/environment", async (original) => {
     ...loaded,
     env: {
       ...loaded.env,
+      get MESSAGING_PROVIDER() {
+        return controls.provider;
+      },
       LINQ_API_KEY: "fixture-linq-key",
       LINQ_PHONE_NUMBER: "+15550100000",
       LINQ_WEBHOOK_SIGNING_SECRET: `whsec_${Buffer.alloc(32, 7).toString("base64")}`,
@@ -80,6 +84,7 @@ const body = JSON.stringify({
 });
 
 beforeEach(() => {
+  controls.provider = "linq";
   vi.clearAllMocks();
   controls.seen.clear();
   controls.findUser.mockResolvedValue("user-a");
@@ -102,6 +107,24 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("public Linq durable webhook boundary", () => {
+  it.each(["disabled", "inkbox"])(
+    "rejects even signed Linq callbacks when %s is selected",
+    async (provider) => {
+      controls.provider = provider;
+      expect(
+        (await route(publicPath).handler(providerRequest(), routeContext()))
+          .status
+      ).toBe(503);
+      expect(
+        (await route(internalPath).handler(relayRequest(), routeContext()))
+          .status
+      ).toBe(503);
+      expect(controls.findUser).not.toHaveBeenCalled();
+      expect(controls.record).not.toHaveBeenCalled();
+      expect(controls.scope).not.toHaveBeenCalled();
+      expect(controls.send).not.toHaveBeenCalled();
+    }
+  );
   it("commits the encrypted inbox before acknowledgment and starts only the relay worker", async () => {
     const committed = deferred<"recorded">();
     controls.record.mockReturnValue(committed.promise);

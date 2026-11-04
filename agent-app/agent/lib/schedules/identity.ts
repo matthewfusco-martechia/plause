@@ -3,6 +3,7 @@ import { z } from "zod";
 
 const scheduledReportIdentitySchema = z.object({
   linqReplyAnchorMessageId: z.string().min(1).optional(),
+  inkboxReplyAnchorMessageId: z.uuid().optional(),
   scheduleId: z.uuid(),
   scheduledReportLeaseToken: z.uuid(),
   scheduledReportSequence: z.coerce.number().int().positive(),
@@ -39,7 +40,10 @@ export function scheduledReportIdentity(
   const identity = scheduledReportIdentitySchema.safeParse(caller.attributes);
   return identity.success
     ? {
-        replyAnchorMessageId: identity.data.linqReplyAnchorMessageId,
+        replyAnchorMessageId:
+          caller.attributes.conversationChannel === "inkbox"
+            ? identity.data.inkboxReplyAnchorMessageId
+            : identity.data.linqReplyAnchorMessageId,
         scheduleId: identity.data.scheduleId,
         leaseToken: identity.data.scheduledReportLeaseToken,
         runId: identity.data.scheduledRunId,

@@ -37,7 +37,14 @@ vi.mock("@db/services/scheduled-agent-jobs", () => ({
   updateScheduledAgentJob: services.update,
 }));
 
+vi.mock("@agent/lib/schedules/wake", () => ({
+  requestScheduleWake: vi
+    .fn<typeof requestScheduleWake>()
+    .mockResolvedValue(undefined),
+}));
+
 import messaging from "@agent/tools/messaging";
+import { requestScheduleWake } from "@agent/lib/schedules/wake";
 import schedules, {
   createSchedule,
   listSchedules,
@@ -51,6 +58,78 @@ describe("schedule tools", () => {
       "fetch",
       vi.fn().mockResolvedValue(new Response(null, { status: 202 }))
     );
+  });
+
+  it("requires the current owner's actual approval before creating future notifications", async () => {
+    const context = toolContext("schedules-create");
+    const input = {
+      missedRunPolicy: "run_latest" as const,
+      prompt: "Fictional reminder",
+      timing: { kind: "once" as const, at: "2026-11-05T14:00:00Z" },
+      notifications: { timezone: "America/New_York", quietHours: null },
+    };
+    await expect(
+      createSchedule.execute(input, { ...context, approval: undefined })
+    ).rejects.toThrow("schedule owner must approve");
+    const approval = context.approval;
+    if (!approval) throw new Error("Missing fixture approval");
+    await expect(
+      createSchedule.execute(input, {
+        ...context,
+        approval: {
+          responder: { ...approval.responder, principalId: "other-owner" },
+        },
+      })
+    ).rejects.toThrow("schedule owner must approve");
+    expect(services.create).not.toHaveBeenCalled();
+  });
+
+  it("pauses newly saved work instead of promising delivery after a failed wake registration", async () => {
+    const job = scheduledJob();
+    services.create.mockResolvedValue(job);
+    services.update.mockResolvedValue({ ...job, status: "paused" });
+    vi.mocked(requestScheduleWake).mockRejectedValueOnce(
+      new Error("Fictional wake service offline")
+    );
+    await expect(
+      createSchedule.execute(
+        {
+          missedRunPolicy: "run_latest",
+          prompt: "Fictional reminder",
+          timing: { kind: "once", at: "2026-11-05T14:00:00Z" },
+          notifications: { timezone: "America/New_York", quietHours: null },
+        },
+        toolContext("schedules-create")
+      )
+    ).rejects.toThrow("Fictional wake service offline");
+    expect(services.update).toHaveBeenCalledWith(
+      { userId: "user-1", workspaceId: "workspace-1" },
+      { conversationChannel: "linq", conversationId: "linq:dm:chat-1" },
+      job.id,
+      { status: "paused" }
+    );
+  });
+
+  it("lets the owner stop a task without granting a fresh notification approval", async () => {
+    const job = scheduledJob();
+    services.update.mockResolvedValue({ ...job, status: "paused" });
+    const context = toolContext("schedules-update");
+    await updateSchedule.execute(
+      { id: job.id, status: "paused" },
+      { ...context, approval: undefined }
+    );
+    expect(services.update).toHaveBeenCalledTimes(1);
+    expect(requestScheduleWake).not.toHaveBeenCalled();
+  });
+
+  it("does not resume an edited task using an approval that omits its full delivery details", async () => {
+    await expect(
+      updateSchedule.execute(
+        { id: scheduledJob().id, status: "active" },
+        toolContext("schedules-update")
+      )
+    ).rejects.toThrow("complete task, timing and notification preferences");
+    expect(services.update).not.toHaveBeenCalled();
   });
 
   it("lets interactive and reporting turns resume scheduled input", async () => {
@@ -148,6 +227,7 @@ describe("schedule tools", () => {
     const result = await createSchedule.execute(
       {
         missedRunPolicy: "run_latest",
+        notifications: { timezone: "America/New_York", quietHours: null },
         prompt: "Send the morning summary.",
         timing: {
           frequency: "daily",
@@ -163,13 +243,27 @@ describe("schedule tools", () => {
       "missedRunPolicy",
       "prompt",
       "timing",
+      "notifications",
     ]);
+    const saved = services.create.mock.calls[0]?.[1];
+    if (!saved?.notificationPolicy) throw new Error("Missing saved policy");
+    expect(z.uuid().safeParse(saved.id).success).toBe(true);
+    expect(
+      Number.isFinite(Date.parse(saved.notificationPolicy.consentedAt))
+    ).toBe(true);
     expect(services.create).toHaveBeenCalledExactlyOnceWith(
       { userId: "user-1", workspaceId: "workspace-1" },
       {
         conversationChannel: "linq",
         conversationId: "linq:dm:chat-1",
+        id: saved.id,
         missedRunPolicy: "run_latest",
+        notificationPolicy: {
+          timezone: "America/New_York",
+          quietHours: null,
+          consentedBy: "user-1",
+          consentedAt: saved.notificationPolicy.consentedAt,
+        },
         prompt: "Send the morning summary.",
         replyAnchorMessageId: "message-1",
         timing: {
@@ -220,6 +314,7 @@ describe("schedule tools", () => {
       "prompt",
       "status",
       "timing",
+      "notifications",
     ]);
     expect(services.update).toHaveBeenCalledExactlyOnceWith(
       { userId: "user-1", workspaceId: "workspace-1" },
@@ -292,6 +387,7 @@ describe("schedule tools", () => {
     await createSchedule.execute(
       {
         missedRunPolicy: "run_latest",
+        notifications: { timezone: "America/New_York", quietHours: null },
         prompt: "Send the morning summary.",
         timing: {
           frequency: "daily",
@@ -355,7 +451,7 @@ function toolContext(
   conversationChannel: "eve" | "linq" = "linq",
   attributes: Record<string, string> = {}
 ): ToolContext {
-  return toolContextFor({
+  const context = toolContextFor({
     auth: {
       current: {
         attributes: {
@@ -376,6 +472,14 @@ function toolContext(
     sessionId: "session-1",
     toolName,
   });
+  const owner = context.session.auth.current;
+  if (!owner) throw new Error("Missing fixture owner");
+  return {
+    ...context,
+    approval: {
+      responder: { ...owner, getToken: (...args) => context.getToken(...args) },
+    },
+  };
 }
 
 function scheduledReportToolContext() {
@@ -406,6 +510,7 @@ function scheduledJob(
   return {
     createdAt: new Date("2026-09-01T12:00:00.000Z"),
     createdByUserId: "user-1",
+    notificationPolicy: null,
     id: "00000000-0000-4000-8000-000000000001",
     lastError: null,
     lastRunAt: null,
@@ -438,6 +543,7 @@ function scheduleSummary(job: ReturnType<typeof scheduledJob>) {
     prompt: job.prompt,
     status: job.status,
     timing: job.timing,
+    notifications: null,
   };
 }
 

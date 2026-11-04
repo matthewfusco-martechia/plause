@@ -3,6 +3,7 @@ import type { ToolContext } from "eve/tools";
 import { z } from "zod";
 import { scopeFromPrincipal } from "@agent/lib/principal-scope";
 import { assertEnrolledWorkspaceUser } from "@db/services/auth/phone-user";
+import type { GoogleWorkspaceCapability } from "@shared/google-workspace/connection";
 import {
   GoogleActionApprovalError,
   GoogleActionUnknownError,
@@ -17,6 +18,7 @@ import {
 export async function withGoogleAuth<T>(
   ctx: ToolContext,
   execute: (authClient: InstanceType<typeof auth.OAuth2>) => Promise<T>,
+  capability: GoogleWorkspaceCapability,
   expectedGrantVersion?: number
 ) {
   const caller = ctx.session.auth.current;
@@ -26,12 +28,13 @@ export async function withGoogleAuth<T>(
   await assertEnrolledWorkspaceUser(scope);
   const { token, version } = await getGoogleWorkspaceAccessToken(
     scope,
+    capability,
     ctx.abortSignal
   );
   ctx.abortSignal.throwIfAborted();
   if (expectedGrantVersion !== undefined && version !== expectedGrantVersion)
     throw new GoogleActionApprovalError();
-  await assertGoogleWorkspaceVersion(scope, version);
+  await assertGoogleWorkspaceVersion(scope, version, capability);
   await assertEnrolledWorkspaceUser(scope);
   const authClient = new auth.OAuth2({
     transporterOptions: {
@@ -47,7 +50,7 @@ export async function withGoogleAuth<T>(
   try {
     const result = await execute(authClient);
     ctx.abortSignal.throwIfAborted();
-    await assertGoogleWorkspaceVersion(scope, version);
+    await assertGoogleWorkspaceVersion(scope, version, capability);
     await assertEnrolledWorkspaceUser(scope);
     return result;
   } catch (error) {

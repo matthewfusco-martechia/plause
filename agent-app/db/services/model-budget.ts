@@ -1,5 +1,21 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { db, modelBudgetAccounts, modelProviderAttempts, user } from "@db";
+import {
+  and,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lte,
+  notExists,
+  or,
+  sql,
+} from "drizzle-orm";
+import {
+  db,
+  modelBudgetAccounts,
+  modelContinuationGrants,
+  modelProviderAttempts,
+  user,
+} from "@db";
 import { env } from "@shared/environment";
 import {
   accessScopeForUser,
@@ -56,17 +72,52 @@ export async function reserveModelAttempt(
       }
       return { admitted: false, attempt: existing };
     }
-    const uncertain = await tx.query.modelProviderAttempts.findFirst({
-      where: and(
-        eq(modelProviderAttempts.workspaceId, input.workspaceId),
-        eq(modelProviderAttempts.rootSessionId, input.rootSessionId),
-        inArray(modelProviderAttempts.status, [
-          "reserved",
-          "started",
-          "unknown",
-        ])
-      ),
-    });
+    const attemptLimit = env.MODEL_GLOBAL_MONTHLY_ATTEMPT_LIMIT;
+    if (attemptLimit !== undefined) {
+      // The global budget row is already locked, so competing users cannot
+      // oversubscribe the call ceiling. Failed/unknown reservations still count.
+      const [attempts] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(modelProviderAttempts)
+        .where(eq(modelProviderAttempts.globalAccountId, globalAccountId));
+      if (!attempts || attempts.count >= attemptLimit)
+        throw new Error("The model attempt limit has been reached.");
+    }
+    const [uncertain] = await tx
+      .select({ id: modelProviderAttempts.id })
+      .from(modelProviderAttempts)
+      .where(
+        and(
+          eq(modelProviderAttempts.workspaceId, input.workspaceId),
+          eq(modelProviderAttempts.rootSessionId, input.rootSessionId),
+          or(
+            inArray(modelProviderAttempts.status, ["reserved", "started"]),
+            and(
+              eq(modelProviderAttempts.status, "unknown"),
+              or(
+                isNull(modelProviderAttempts.continuationExpiresAt),
+                lte(modelProviderAttempts.continuationExpiresAt, now)
+              ),
+              notExists(
+                tx
+                  .select({ hash: modelContinuationGrants.authorizationHash })
+                  .from(modelContinuationGrants)
+                  .where(
+                    and(
+                      eq(
+                        modelContinuationGrants.attemptId,
+                        modelProviderAttempts.id
+                      ),
+                      lte(modelContinuationGrants.authorizedAt, now),
+                      gt(modelContinuationGrants.expiresAt, now)
+                    )
+                  )
+              )
+            )
+          )
+        )
+      )
+      .limit(1);
     if (uncertain)
       throw new Error(
         "This conversation has an unresolved model charge or call in progress. Automatic retries are blocked."
@@ -105,6 +156,137 @@ export async function reserveModelAttempt(
       })
       .where(inArray(modelBudgetAccounts.id, ids));
     return { admitted: true, attempt };
+  });
+}
+
+// Operator-only recovery: no HTTP route or model tool exposes this mutation.
+// The unknown attempt, held amount and exact-request replay fence stay intact.
+export async function authorizeModelContinuation(
+  scope: AccessScope,
+  input: {
+    attemptId: string;
+    rootSessionId: string;
+    reservedMicroUsd: number;
+    authorizationHash: string;
+    expiresAt: Date;
+  },
+  now = new Date()
+) {
+  if (
+    !scope.userId.startsWith("better-auth:") ||
+    accessScopeForUser(scope.userId).workspaceId !== scope.workspaceId ||
+    !/^[a-f0-9]{64}$/u.test(input.authorizationHash) ||
+    !Number.isSafeInteger(input.reservedMicroUsd) ||
+    input.reservedMicroUsd <= 0 ||
+    !(input.expiresAt > now) ||
+    input.expiresAt.getTime() - now.getTime() > 60 * 60 * 1000
+  )
+    throw new Error("A valid owner continuation authorization is required.");
+  return db.transaction(async (tx) => {
+    const [owner] = await tx
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.id, scope.userId.slice("better-auth:".length)))
+      .for("key share");
+    if (!owner) throw new Error("The workspace owner no longer exists.");
+    const observed = await tx.query.modelProviderAttempts.findFirst({
+      where: and(
+        eq(modelProviderAttempts.id, input.attemptId),
+        eq(modelProviderAttempts.workspaceId, scope.workspaceId)
+      ),
+    });
+    if (!observed) throw new Error("Unknown model request.");
+    const accounts = await tx
+      .select()
+      .from(modelBudgetAccounts)
+      .where(
+        inArray(modelBudgetAccounts.id, [
+          observed.globalAccountId,
+          observed.userAccountId,
+        ])
+      )
+      .orderBy(modelBudgetAccounts.id)
+      .for("update");
+    const [attempt] = await tx
+      .select()
+      .from(modelProviderAttempts)
+      .where(
+        and(
+          eq(modelProviderAttempts.id, input.attemptId),
+          eq(modelProviderAttempts.workspaceId, scope.workspaceId)
+        )
+      )
+      .for("update");
+    if (
+      attempt?.status !== "unknown" ||
+      attempt.model !== "gpt-6-luna" ||
+      attempt.rootSessionId !== input.rootSessionId ||
+      attempt.reservedMicroUsd !== input.reservedMicroUsd ||
+      attempt.encryptedResult !== null ||
+      accounts.length !== 2 ||
+      accounts.some((account) => account.heldMicroUsd < input.reservedMicroUsd)
+    )
+      throw new Error("The unresolved request no longer matches the review.");
+    if (attempt.continuationAuthorizationHash !== null) {
+      if (attempt.continuationAuthorizationHash === input.authorizationHash) {
+        if (
+          attempt.continuationExpiresAt?.getTime() !== input.expiresAt.getTime()
+        )
+          throw new Error("This continuation was already authorized.");
+        return { authorized: false };
+      }
+      if (attempt.continuationExpiresAt && attempt.continuationExpiresAt > now)
+        throw new Error("A continuation authorization is still active.");
+    }
+    const existingGrant = await tx.query.modelContinuationGrants.findFirst({
+      where: eq(
+        modelContinuationGrants.authorizationHash,
+        input.authorizationHash
+      ),
+    });
+    if (existingGrant) {
+      if (
+        existingGrant.attemptId !== input.attemptId ||
+        existingGrant.expiresAt.getTime() !== input.expiresAt.getTime()
+      )
+        throw new Error("This continuation was already authorized.");
+      return { authorized: false };
+    }
+    const activeGrant = await tx.query.modelContinuationGrants.findFirst({
+      where: and(
+        eq(modelContinuationGrants.attemptId, input.attemptId),
+        gt(modelContinuationGrants.expiresAt, now)
+      ),
+    });
+    if (activeGrant)
+      throw new Error("A continuation authorization is still active.");
+    const active = await tx.query.modelProviderAttempts.findFirst({
+      where: and(
+        eq(modelProviderAttempts.workspaceId, scope.workspaceId),
+        eq(modelProviderAttempts.rootSessionId, input.rootSessionId),
+        inArray(modelProviderAttempts.status, ["reserved", "started"])
+      ),
+    });
+    if (active)
+      throw new Error("The conversation still has active model work.");
+    if (attempt.continuationAuthorizationHash !== null) {
+      await tx.insert(modelContinuationGrants).values({
+        authorizationHash: input.authorizationHash,
+        attemptId: input.attemptId,
+        authorizedAt: now,
+        expiresAt: input.expiresAt,
+      });
+      return { authorized: true };
+    }
+    await tx
+      .update(modelProviderAttempts)
+      .set({
+        continuationAuthorizedAt: now,
+        continuationExpiresAt: input.expiresAt,
+        continuationAuthorizationHash: input.authorizationHash,
+      })
+      .where(eq(modelProviderAttempts.id, input.attemptId));
+    return { authorized: true };
   });
 }
 

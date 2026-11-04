@@ -1,0 +1,38 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "plause-agent-private",
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "vars": {
+    "PLAUSE_HOSTING_ENABLED": "false",
+    "PLAUSE_ALWAYS_ON": "false",
+    "PLAUSE_HOST": "agent.plause.si",
+    "PLAUSE_WORKFLOW_BACKEND": "postgres",
+    "MESSAGING_PROVIDER": "disabled",
+    "LIVE_MODEL_ENABLED": "false",
+    "BROWSER_ACTIONS_ENABLED": "false",
+    "GOOGLE_WORKSPACE_WRITES_ENABLED": "false",
+    "WORKFLOW_POSTGRES_WORKER_CONCURRENCY": "4",
+    "WORKFLOW_POSTGRES_MAX_POOL_SIZE": "10",
+    "WORKFLOW_POSTGRES_POLL_INTERVAL_MS": "2000"
+  },
+  "containers": [
+    {
+      "class_name": "PlauseRuntime",
+      "scheduling_policy": "default",
+      "image": "./Dockerfile",
+      "image_build_context": "../..",
+      "instance_type": "basic",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "PLAUSE_RUNTIME", "class_name": "PlauseRuntime" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PlauseRuntime"] }],
+  "triggers": { "crons": ["*/5 * * * *"] }
+}

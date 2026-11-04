@@ -21,6 +21,10 @@ import {
   googleActionDispatches,
 } from "@db/schema/google-actions";
 import { googleWorkspaceConnections } from "@db/schema/google-workspace";
+import {
+  googleWorkspaceWriteScopes,
+  googleWorkspaceScopes,
+} from "@shared/google-workspace/connection";
 import * as service from "@db/services/google-actions";
 import { disconnectGoogleWorkspace } from "@db/services/google-workspace";
 import { decryptWorkspaceValue } from "@db/services/protected-values";
@@ -42,6 +46,7 @@ vi.mock("@db/services/auth/phone-user", () => ({
 }));
 
 const database = new PGlite();
+await database.waitReady;
 const alice = accessScopeForUser("better-auth:alice");
 const bob = accessScopeForUser("better-auth:bob");
 const resultSchema = z.object({ id: z.string() });
@@ -98,8 +103,18 @@ beforeEach(async () => {
     "DELETE FROM browser_action_attempts; DELETE FROM google_action_dispatches; DELETE FROM google_action_approvals; DELETE FROM google_workspace_connections"
   );
   await Database.db.insert(googleWorkspaceConnections).values([
-    { ...alice, version: 7, status: "connected" },
-    { ...bob, version: 7, status: "connected" },
+    {
+      ...alice,
+      version: 7,
+      status: "connected",
+      grantedScopes: googleWorkspaceWriteScopes.join(" "),
+    },
+    {
+      ...bob,
+      version: 7,
+      status: "connected",
+      grantedScopes: googleWorkspaceWriteScopes.join(" "),
+    },
   ]);
   enrollment.allowed = true;
   enrollment.checks = 0;
@@ -139,6 +154,32 @@ function browserInput(rootSessionId = "session-1") {
 }
 
 describe("durable exact Google action authority", () => {
+  it("refuses to request write approval for a read-only Google connection", async () => {
+    await Database.db
+      .update(googleWorkspaceConnections)
+      .set({ grantedScopes: googleWorkspaceScopes.join(" ") })
+      .where(eq(googleWorkspaceConnections.workspaceId, alice.workspaceId));
+    await expect(
+      service.requestGoogleActionApproval(binding(), 7)
+    ).rejects.toThrow("current approval");
+    expect(operation).not.toHaveBeenCalled();
+    expect(await Database.db.select().from(googleActionApprovals)).toEqual([]);
+  });
+
+  it("rechecks write permission after approval and before provider dispatch", async () => {
+    const value = await approved();
+    await Database.db
+      .update(googleWorkspaceConnections)
+      .set({ grantedScopes: googleWorkspaceScopes.join(" ") })
+      .where(eq(googleWorkspaceConnections.workspaceId, alice.workspaceId));
+    await expect(service.readGoogleActionGrant(value)).rejects.toThrow(
+      "current approval"
+    );
+    await expect(run(value)).rejects.toThrow("current approval");
+    expect(operation).not.toHaveBeenCalled();
+    expect(await Database.db.select().from(googleActionDispatches)).toEqual([]);
+  });
+
   it("blocks browser fallback after an unknown Google write without refunding its tombstone", async () => {
     const value = await approved();
     operation.mockRejectedValueOnce(new Error("Uncertain Google response."));
@@ -324,6 +365,7 @@ describe("durable exact Google action authority", () => {
           await Database.db
             .update(googleActionApprovals)
             .set({ expiresAt: new Date(Date.now() - 1000) });
+        return "+15550100001";
       });
     try {
       await expect(run(value)).rejects.toThrow("unconfirmed outcome");

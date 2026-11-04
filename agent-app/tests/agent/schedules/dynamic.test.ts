@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   claimReadyScheduledAgentRuns,
   claimScheduledReport,
+  expireScheduledAgentRuns,
   finalizeScheduledReport,
   listRecoverableScheduledReports,
   materializeDueScheduledAgentRuns,
@@ -17,6 +18,8 @@ import type {
 } from "@db/services/scheduled-agent-jobs";
 
 const services = vi.hoisted(() => ({
+  nextWake: vi.fn<() => Promise<Date | null>>().mockResolvedValue(null),
+  expire: vi.fn<typeof expireScheduledAgentRuns>().mockResolvedValue([]),
   claimReports: vi.fn<typeof claimScheduledReport>(),
   claimRuns: vi.fn<typeof claimReadyScheduledAgentRuns>(),
   finalizeReport: vi.fn<typeof finalizeScheduledReport>(),
@@ -32,6 +35,8 @@ const requests = vi.hoisted(() => ({
 
 vi.mock("@db/services/scheduled-agent-jobs", () => ({
   claimReadyScheduledAgentRuns: services.claimRuns,
+  readNextScheduledWake: services.nextWake,
+  expireScheduledAgentRuns: services.expire,
   claimScheduledReport: services.claimReports,
   finalizeScheduledReport: services.finalizeReport,
   listRecoverableScheduledReports: services.listReports,
@@ -41,11 +46,18 @@ vi.mock("@db/services/scheduled-agent-jobs", () => ({
   setScheduledRunSession: services.setSession,
 }));
 vi.mock("@agent/channels/linq", () => ({ default: { channel: "linq" } }));
+vi.mock("@agent/channels/inkbox", () => ({ default: { channel: "inkbox" } }));
 vi.mock("@agent/lib/schedules/request", () => ({
   postScheduledReport: requests.report,
 }));
 vi.mock("@agent/channels/scheduled-run", () => ({
   default: { channel: "scheduled-run" },
+}));
+
+vi.mock("@agent/lib/schedules/wake", () => ({
+  requestScheduleWake: vi
+    .fn<(at: Date | null) => Promise<void>>()
+    .mockResolvedValue(undefined),
 }));
 
 import dynamicSchedule from "@agent/schedules/dynamic";
@@ -173,6 +185,36 @@ describe("scheduled report delivery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     services.releaseReport.mockResolvedValue(true);
+  });
+
+  it("routes Inkbox reports with the complete identity/conversation token and Inkbox anchor", async () => {
+    const report = scheduledReport();
+    report.job.conversationChannel = "inkbox";
+    report.job.conversationId =
+      "inkbox:10000000-0000-4000-8000-000000000001:20000000-0000-4000-8000-000000000001:40000000-0000-4000-8000-000000000001";
+    report.job.replyAnchorMessageId = "30000000-0000-4000-8000-000000000001";
+    services.claimReports.mockResolvedValue(report);
+    const send = vi
+      .fn<ReturnType<ScheduleToFn>["send"]>()
+      .mockResolvedValue(acceptedDelivery("inkbox-session"));
+    const to = vi.fn<ScheduleToFn>(() => ({ send }));
+    await dispatchScheduledReport({ to }, report.run.id);
+    expect(to).toHaveBeenCalledExactlyOnceWith(
+      { channel: "inkbox" },
+      { conversationId: report.job.conversationId }
+    );
+    expect(send.mock.calls[0]?.[1]).toMatchObject({
+      auth: {
+        attributes: {
+          conversationChannel: "inkbox",
+          conversationId: report.job.conversationId,
+          inkboxReplyAnchorMessageId: report.job.replyAnchorMessageId,
+        },
+      },
+    });
+    expect(send.mock.calls[0]?.[1].auth?.attributes).not.toHaveProperty(
+      "linqReplyAnchorMessageId"
+    );
   });
 
   it("routes Linq reports to the stored conversation", async () => {
@@ -315,6 +357,7 @@ function scheduledClaim(): Awaited<
     job: {
       createdAt: new Date("2026-09-01T12:00:00.000Z"),
       createdByUserId: "user-1",
+      notificationPolicy: null,
       id: "00000000-0000-4000-8000-000000000001",
       lastError: null,
       lastRunAt: new Date("2026-09-02T13:00:00.000Z"),
@@ -340,6 +383,8 @@ function scheduledClaim(): Awaited<
       completedAt: null,
       createdAt: new Date("2026-09-02T13:00:00.000Z"),
       deferredCompletionTurnId: null,
+      jobRevision: 0,
+      reportNotBefore: null,
       id: "00000000-0000-4000-8000-000000000002",
       pendingInputRequests: null,
       jobId: "00000000-0000-4000-8000-000000000001",

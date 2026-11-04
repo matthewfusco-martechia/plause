@@ -197,20 +197,31 @@ export function budgetedOpenAIFetch(
         "The model request was already admitted. Automatic retry is blocked."
       );
     let completedResponse: Response;
+    let phase = "authorization";
+    let providerRequestId: string | undefined;
+    let httpStatus: number | undefined;
     try {
       signal.throwIfAborted();
       await assertModelAuthority(context);
+      phase = "dispatch_marker";
       await startModelAttempt(context, id);
+      phase = "authorization_after_dispatch";
       signal.throwIfAborted();
       await assertModelAuthority(context);
       signal.throwIfAborted();
+      phase = "provider_request";
       const response = await transport("https://api.openai.com/v1/responses", {
         method: "POST",
-        headers,
+        headers: { ...headers, "X-Client-Request-Id": id },
         body: bodyText,
         signal,
         redirect: "error",
       });
+      phase = "response_headers";
+      httpStatus = response.status;
+      const requestId = response.headers.get("x-request-id");
+      if (requestId && /^req_[A-Za-z0-9_-]{1,196}$/u.test(requestId))
+        providerRequestId = requestId;
       if (!response.ok) throw new Error("OpenAI generation did not complete.");
       const contentType = response.headers.get("content-type")?.split(";")[0];
       if (
@@ -218,8 +229,11 @@ export function budgetedOpenAIFetch(
         contentType !== "text/event-stream"
       )
         throw new Error("Unexpected OpenAI response format.");
+      phase = "response_body";
       const body = await readBounded(response, 2_000_000, signal);
+      phase = "completion_validation";
       const completion = completionFromBody(body, contentType);
+      phase = "usage_validation";
       if (
         completion.usage.input_tokens !== inputTokens ||
         completion.usage.output_tokens > payload.max_output_tokens
@@ -230,11 +244,13 @@ export function budgetedOpenAIFetch(
         completion.usage.input_tokens,
         completion.usage.output_tokens
       );
+      phase = "result_encryption";
       const encryptedResult = await encryptWorkspaceValue(
         context,
         `model:${id}`,
         JSON.stringify({ body, contentType })
       );
+      phase = "accounting_settlement";
       await settleModelAttempt(context, id, {
         actualMicroUsd,
         encryptedResult,
@@ -244,10 +260,18 @@ export function budgetedOpenAIFetch(
       completedResponse = new Response(body, {
         headers: { "content-type": contentType },
       });
-    } catch {
+    } catch (error) {
       await holdUnknownModelAttempt(context, id);
+      // Persist only controlled diagnostic fields in the workflow error. Never
+      // include provider bodies, prompts, credentials or raw exception messages.
+      const failure =
+        error instanceof Error &&
+        ["TimeoutError", "AbortError"].includes(error.name)
+          ? error.name
+          : "request_failed";
+      // oxlint-disable-next-line eslint/preserve-caught-error -- Raw provider exceptions can contain private content; only controlled diagnostics may enter workflow history.
       throw new Error(
-        "Model execution stopped. Its reserved cost remains held until the outcome is reconciled."
+        `Model execution stopped. Its reserved cost remains held until the outcome is reconciled. Diagnostic: ${JSON.stringify({ phase, failure, clientRequestId: id, providerRequestId, httpStatus })}`
       );
     }
     // Accounting has already committed. Revocation must suppress the result

@@ -65,9 +65,12 @@ const relayAuthorization = new AsyncLocalStorage<RelayAuthorization>();
 
 export const linqWebhookVerifier: NonNullable<
   LinqChannelCredentials["webhookVerifier"]
-> = (request, rawBody) => verifyLinqWebhook(request, rawBody) !== null;
+> = (request, rawBody) =>
+  env.MESSAGING_PROVIDER === "linq" &&
+  verifyLinqWebhook(request, rawBody) !== null;
 
 function verifyInternalRelayBody(_request: Request, rawBody: Uint8Array) {
+  if (!linqSelected()) return false;
   const authorization = relayAuthorization.getStore();
   if (!authorization) return false;
   try {
@@ -433,7 +436,7 @@ export async function resolveVerifiedLinqMessage(
   context: Parameters<NonNullable<LinqChannelConfig["onMessage"]>>[0],
   message: Parameters<NonNullable<LinqChannelConfig["onMessage"]>>[1]
 ) {
-  if (message.author.isBot) return null;
+  if (!linqSelected() || message.author.isBot) return null;
 
   const auth = defaultLinqAuth(message);
   const authorUserName = z.string().safeParse(message.author.userName);
@@ -476,11 +479,13 @@ async function assertLinqSender(context: Pick<SessionContext, "session">) {
 }
 
 async function assertLinqAuth(auth: SessionAuth) {
+  if (!linqSelected()) throw new Error("Linq messaging is not selected.");
   const caller = auth.current ?? auth.initiator;
   if (!caller)
     throw new Error("Linq delivery requires an enrolled workspace user.");
   const scope = scopeFromPrincipal(caller);
   await assertEnrolledWorkspaceUser(scope);
+  if (!linqSelected()) throw new Error("Linq messaging is not selected.");
   return scope;
 }
 
@@ -495,6 +500,7 @@ export default Object.assign(channel, {
   // Only the signed, durable-inbox relay can reach the native SDK admission path.
   routes: [
     POST(LINQ_INTERNAL_ROUTE, async (request, context) => {
+      if (!linqSelected()) return new Response(null, { status: 503 });
       const authenticated = await authenticateScheduledRequest(request);
       if (authenticated instanceof Response) return authenticated;
       const eventKey = request.headers.get("x-plause-linq-event");
@@ -531,6 +537,7 @@ export default Object.assign(channel, {
         phone
       );
       if (!row?.userId) return new Response(null, { status: 409 });
+      if (!linqSelected()) return new Response(null, { status: 503 });
       const tasks: Promise<unknown>[] = [];
       const authorization: RelayAuthorization = {
         bodyDigest,
@@ -576,3 +583,7 @@ export default Object.assign(channel, {
     }),
   ],
 });
+
+function linqSelected() {
+  return env.MESSAGING_PROVIDER === "linq";
+}

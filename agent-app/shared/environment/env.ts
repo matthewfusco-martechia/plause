@@ -2,6 +2,11 @@ import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
 import { isE164PhoneNumber } from "@shared/identity/phone-number";
 import { databaseUrlSchema } from "@shared/environment/database-url";
+import {
+  inkboxAgentHandleSchema,
+  inkboxIdentityIdSchema,
+  inkboxWebhookSigningKeySchema,
+} from "@shared/messaging/inkbox";
 
 export const betterAuthSecretSchema = z
   .string()
@@ -67,6 +72,26 @@ export const env = createEnv({
     // Required
     DATABASE_URL: databaseUrlSchema,
     KERNEL_API_KEY: requiredValue,
+    PLAUSE_WORKFLOW_BACKEND: z.enum(["local", "postgres"]).default("local"),
+    WORKFLOW_POSTGRES_URL: databaseUrlSchema.optional(),
+    WORKFLOW_POSTGRES_WORKER_CONCURRENCY: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional(),
+    WORKFLOW_POSTGRES_MAX_POOL_SIZE: z.coerce
+      .number()
+      .int()
+      .min(3)
+      .max(60)
+      .optional(),
+    WORKFLOW_POSTGRES_POLL_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(500)
+      .max(30_000)
+      .optional(),
 
     // Explicit installation secrets are required on hosted installations.
     // Loopback development alone can use the stable local defaults.
@@ -98,6 +123,7 @@ export const env = createEnv({
     OPENAI_MODEL: z.literal("gpt-6-luna").default("gpt-6-luna"),
     OPENAI_BROWSER_MODEL: z.literal("gpt-6-luna").default("gpt-6-luna"),
     LIVE_MODEL_ENABLED: z.enum(["false", "true"]).default("false"),
+    SCHEDULED_TASKS_ENABLED: z.enum(["false", "true"]).default("false"),
     WEB_RESEARCH_ENABLED: z.enum(["false", "true"]).default("false"),
     TAVILY_API_KEY: requiredValue.optional(),
     MODEL_MAX_INPUT_TOKENS: z.coerce
@@ -124,6 +150,12 @@ export const env = createEnv({
       .min(1)
       .max(100_000_000)
       .default(30_000),
+    MODEL_GLOBAL_MONTHLY_ATTEMPT_LIMIT: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100_000)
+      .optional(),
     MODEL_GLOBAL_MONTHLY_BUDGET_MICRO_USD: z.coerce
       .number()
       .int()
@@ -139,9 +171,17 @@ export const env = createEnv({
           value.split(",").every((phone) => isE164PhoneNumber(phone.trim())),
         "PRIVATE_ALLOWED_PHONE_NUMBERS must contain comma-separated E.164 phone numbers."
       ),
+    MESSAGING_PROVIDER: z
+      .enum(["disabled", "inkbox", "linq"])
+      .default("disabled"),
+    INKBOX_API_KEY: requiredValue.optional(),
+    INKBOX_IDENTITY_ID: inkboxIdentityIdSchema.optional(),
+    INKBOX_AGENT_HANDLE: inkboxAgentHandleSchema.optional(),
+    INKBOX_WEBHOOK_SIGNING_KEY: inkboxWebhookSigningKeySchema.optional(),
     LINQ_API_KEY: requiredValue.optional(),
     LINQ_WEBHOOK_SIGNING_SECRET: requiredValue.optional(),
     INTERNAL_SERVICE_SECRET: z.string().min(32).optional(),
+    PLAUSE_EDGE_INTERNAL_TOKEN: z.string().min(32).max(256).optional(),
     GOOGLE_CLIENT_ID: requiredValue.optional(),
     GOOGLE_CLIENT_SECRET: requiredValue.optional(),
 

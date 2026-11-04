@@ -1,8 +1,16 @@
 import { auth } from "@googleapis/gmail";
 import { z } from "zod";
 import type { ToolContext } from "eve/tools";
+import type { checkCalendarAvailability } from "@agent/lib/google-workspace/calendar";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toolContextFor } from "@tests/helpers/tool-context";
+
+const calendarAvailability = vi.hoisted(() =>
+  vi.fn<typeof checkCalendarAvailability>()
+);
+vi.mock("@agent/lib/google-workspace/calendar", () => ({
+  checkCalendarAvailability: calendarAvailability,
+}));
 
 vi.mock("@agent/lib/google-workspace/client", () => ({
   withGoogleAuth: async <T>(
@@ -19,8 +27,10 @@ import {
   readDriveTextFile,
   searchDriveFiles,
 } from "@agent/lib/google-workspace/drive";
+import { driveReadNamedText } from "@agent/tools/drive";
 
 beforeEach(() => {
+  calendarAvailability.mockReset();
   vi.spyOn(globalThis, "fetch");
 });
 afterEach(() => vi.restoreAllMocks());
@@ -35,6 +45,72 @@ const file = {
 };
 
 describe("bounded read-only Drive", () => {
+  it("reads one exact filename and reports only the requested primary Calendar window", async () => {
+    const window = {
+      timeMin: "2026-11-05T14:00:00Z",
+      timeMax: "2026-11-05T14:15:00Z",
+      timezone: "America/New_York",
+    };
+    calendarAvailability.mockResolvedValueOnce({
+      calendars: { primary: { busy: [] } },
+    });
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce(Response.json({ files: [file] }))
+      .mockResolvedValueOnce(Response.json(file))
+      .mockResolvedValueOnce(
+        new Response("Fictional brief", {
+          headers: { "content-type": "text/plain" },
+        })
+      );
+    expect(
+      await driveReadNamedText.execute(
+        { name: file.name, primaryCalendarWindow: window },
+        context
+      )
+    ).toEqual({
+      file: {
+        status: "found",
+        name: file.name,
+        text: "Fictional brief",
+        truncated: false,
+        untrustedContent: true,
+      },
+      primaryCalendar: { ...window, status: "free" },
+    });
+    const query = requestUrl(
+      vi.mocked(globalThis.fetch).mock.calls[0]?.[0]
+    ).searchParams.get("q");
+    expect(query).toBe("trashed = false and name = 'Fictional notes'");
+    expect(calendarAvailability).toHaveBeenCalledExactlyOnceWith(context, {
+      calendars: ["primary"],
+      ...window,
+    });
+  });
+
+  it("leaves duplicates unopened and marks missing Calendar results unavailable", async () => {
+    calendarAvailability.mockResolvedValueOnce({ calendars: {} });
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      Response.json({ files: [file, { ...file, id: "file_456" }] })
+    );
+    expect(
+      await driveReadNamedText.execute(
+        {
+          name: file.name,
+          primaryCalendarWindow: {
+            timeMin: "2026-11-05T14:00:00Z",
+            timeMax: "2026-11-05T14:15:00Z",
+            timezone: "UTC",
+          },
+        },
+        context
+      )
+    ).toMatchObject({
+      file: { status: "ambiguous" },
+      primaryCalendar: { status: "unavailable" },
+    });
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+  });
+
   it("searches one bounded page and keeps tokens exclusively in the Authorization header", async () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       Response.json({ files: [file], nextPageToken: "next-fixture-page" })

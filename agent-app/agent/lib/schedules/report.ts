@@ -7,6 +7,7 @@ import {
   releaseScheduledReport,
 } from "@db/services/scheduled-agent-jobs";
 import linq from "../../channels/linq";
+import inkbox from "@agent/channels/inkbox";
 
 type ClaimedScheduledReport = NonNullable<
   Awaited<ReturnType<typeof claimScheduledReport>>
@@ -41,6 +42,12 @@ export async function dispatchScheduledReport(
   };
   try {
     const prompt = scheduledReportPrompt(claimed);
+    if (claimed.job.conversationChannel === "inkbox") {
+      await delivery
+        .to(inkbox, { conversationId: claimed.job.conversationId })
+        .send(prompt, options);
+      return;
+    }
     if (claimed.job.conversationChannel === "linq") {
       const session = await delivery
         .to(linq, {
@@ -146,6 +153,15 @@ function scheduledReportAttributes(
   ) {
     attributes.set(
       "linqReplyAnchorMessageId",
+      claimed.job.replyAnchorMessageId
+    );
+  }
+  if (
+    claimed.job.conversationChannel === "inkbox" &&
+    claimed.job.replyAnchorMessageId
+  ) {
+    attributes.set(
+      "inkboxReplyAnchorMessageId",
       claimed.job.replyAnchorMessageId
     );
   }

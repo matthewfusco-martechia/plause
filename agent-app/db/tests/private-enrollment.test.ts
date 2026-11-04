@@ -116,7 +116,9 @@ describe("private phone enrollment", () => {
       phoneNumberVerified: true,
     });
     const scope = accessScopeForUser("better-auth:user-1");
-    await expect(assertEnrolledWorkspaceUser(scope)).resolves.toBeUndefined();
+    await expect(assertEnrolledWorkspaceUser(scope)).resolves.toBe(
+      "+12025550123"
+    );
     fixture.env.PRIVATE_ALLOWED_PHONE_NUMBERS = "";
     await expect(assertEnrolledWorkspaceUser(scope)).rejects.toThrow(
       "Private Plause access is unavailable"

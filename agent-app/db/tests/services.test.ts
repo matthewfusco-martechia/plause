@@ -11,6 +11,31 @@ import {
 } from "../schema";
 
 const databases: PGlite[] = [];
+// Complete cold Postgres/Wasm and service-module loading before the ownership assertions' deadline.
+const client = new PGlite();
+databases.push(client);
+await client.waitReady;
+const [
+  browserImages,
+  browsers,
+  browserTraces,
+  chats,
+  secrets,
+  sessions,
+  settings,
+  scope,
+  vault,
+] = await Promise.all([
+  import("@db/services/browser-images"),
+  import("@db/services/browsers"),
+  import("@db/services/browser-traces"),
+  import("@db/services/chats"),
+  import("@db/services/secrets"),
+  import("@db/services/sessions"),
+  import("@db/services/settings"),
+  import("@db/services/scope"),
+  import("@db/services/vault"),
+]);
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -20,8 +45,6 @@ afterEach(async () => {
 
 describe("database services", () => {
   it("preserves workspace ownership across application domains", async () => {
-    const client = new PGlite();
-    databases.push(client);
     await applyInitialMigration(client);
     await applyBrowserImageMigration(client);
     await applyBrowserTraceMigration(client);
@@ -43,27 +66,6 @@ describe("database services", () => {
     const database = pgliteDatabase as never;
     vi.spyOn(Database, "db", "get").mockReturnValue(database);
 
-    const [
-      browserImages,
-      browsers,
-      browserTraces,
-      chats,
-      secrets,
-      sessions,
-      settings,
-      scope,
-      vault,
-    ] = await Promise.all([
-      import("@db/services/browser-images"),
-      import("@db/services/browsers"),
-      import("@db/services/browser-traces"),
-      import("@db/services/chats"),
-      import("@db/services/secrets"),
-      import("@db/services/sessions"),
-      import("@db/services/settings"),
-      import("@db/services/scope"),
-      import("@db/services/vault"),
-    ]);
     const alice = { userId: "alice", workspaceId: "workspace:alice" };
     const bob = { userId: "bob", workspaceId: "workspace:bob" };
 

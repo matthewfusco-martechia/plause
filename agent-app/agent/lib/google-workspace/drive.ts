@@ -27,116 +27,141 @@ const maximumTextCharacters = 16_000;
 
 export async function searchDriveFiles(
   ctx: ToolContext,
-  input: { query: string; maxResults: number; pageToken?: string }
+  input: {
+    query: string;
+    maxResults: number;
+    pageToken?: string;
+    exactName?: boolean;
+  }
 ) {
-  const query = z.string().trim().min(1).max(500).parse(input.query);
+  const query = (input.exactName ? z.string() : z.string().trim())
+    .min(1)
+    .max(500)
+    .parse(input.query);
   const maxResults = z.number().int().min(1).max(20).parse(input.maxResults);
   const pageToken = z.string().max(4096).optional().parse(input.pageToken);
-  return withGoogleAuth(ctx, async (client) => {
-    const token = z.string().min(1).parse(client.credentials.access_token);
-    const literal = query.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
-    const url = new URL("https://www.googleapis.com/drive/v3/files");
-    url.search = new URLSearchParams({
-      q: `trashed = false and (name contains '${literal}' or fullText contains '${literal}')`,
-      pageSize: String(maxResults),
-      fields: "nextPageToken,files(id,name,mimeType,modifiedTime,size)",
-      spaces: "drive",
-    }).toString();
-    if (pageToken) url.searchParams.set("pageToken", pageToken);
-    const response = await driveRequest(url, token, ctx.abortSignal);
-    const body = await boundedText(
-      response,
-      maximumReadBytes,
-      ctx.abortSignal,
-      false
-    );
-    try {
-      const result = listingSchema.parse(JSON.parse(body.text));
-      return {
-        files: result.files.map((file) => ({
-          ...file,
-          url: `https://drive.google.com/file/d/${file.id}/view`,
-        })),
-        nextPageToken: result.nextPageToken ?? null,
-      };
-    } catch {
-      throw new Error("Google Drive returned invalid file metadata.");
-    }
-  });
+  return withGoogleAuth(
+    ctx,
+    async (client) => {
+      const token = z.string().min(1).parse(client.credentials.access_token);
+      const literal = query.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
+      const url = new URL("https://www.googleapis.com/drive/v3/files");
+      url.search = new URLSearchParams({
+        q: input.exactName
+          ? `trashed = false and name = '${literal}'`
+          : `trashed = false and (name contains '${literal}' or fullText contains '${literal}')`,
+        pageSize: String(maxResults),
+        fields: "nextPageToken,files(id,name,mimeType,modifiedTime,size)",
+        spaces: "drive",
+      }).toString();
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const response = await driveRequest(url, token, ctx.abortSignal);
+      const body = await boundedText(
+        response,
+        maximumReadBytes,
+        ctx.abortSignal,
+        false
+      );
+      try {
+        const result = listingSchema.parse(JSON.parse(body.text));
+        return {
+          files: result.files.map((file) => ({
+            ...file,
+            url: `https://drive.google.com/file/d/${file.id}/view`,
+          })),
+          nextPageToken: result.nextPageToken ?? null,
+        };
+      } catch {
+        throw new Error("Google Drive returned invalid file metadata.");
+      }
+    },
+    "drive.read"
+  );
 }
 
-export async function readDriveTextFile(ctx: ToolContext, rawFileId: string) {
+export async function readDriveTextFile(
+  ctx: ToolContext,
+  rawFileId: string,
+  expectedName?: string
+) {
   const fileId = fileIdSchema.parse(rawFileId);
-  return withGoogleAuth(ctx, async (client) => {
-    const token = z.string().min(1).parse(client.credentials.access_token);
-    const metadataUrl = new URL(
-      `https://www.googleapis.com/drive/v3/files/${fileId}`
-    );
-    metadataUrl.searchParams.set(
-      "fields",
-      "id,name,mimeType,size,trashed,capabilities(canDownload)"
-    );
-    const metadataBody = await boundedText(
-      await driveRequest(metadataUrl, token, ctx.abortSignal),
-      maximumReadBytes,
-      ctx.abortSignal,
-      false
-    );
-    let file: z.infer<typeof metadataSchema>;
-    try {
-      file = metadataSchema.parse(JSON.parse(metadataBody.text));
-    } catch {
-      throw new Error("Google Drive returned invalid file metadata.");
-    }
-    if (
-      file.id !== fileId ||
-      file.trashed ||
-      file.capabilities?.canDownload === false
-    )
-      throw new Error("This Drive file is not available for text reading.");
-    const nativeDocument =
-      file.mimeType === "application/vnd.google-apps.document";
-    if (!nativeDocument && !textMimeTypes.has(file.mimeType))
-      throw new Error(
-        "Drive reading supports Google Docs and plain text, Markdown, CSV or JSON files only."
+  return withGoogleAuth(
+    ctx,
+    async (client) => {
+      const token = z.string().min(1).parse(client.credentials.access_token);
+      const metadataUrl = new URL(
+        `https://www.googleapis.com/drive/v3/files/${fileId}`
       );
-    if (!nativeDocument && file.size && Number(file.size) > 2 * 1024 * 1024)
-      throw new Error("This Drive file is too large for a bounded text read.");
-    const contentUrl = new URL(
-      `https://www.googleapis.com/drive/v3/files/${fileId}${nativeDocument ? "/export" : ""}`
-    );
-    contentUrl.searchParams.set(
-      nativeDocument ? "mimeType" : "alt",
-      nativeDocument ? "text/plain" : "media"
-    );
-    const response = await driveRequest(contentUrl, token, ctx.abortSignal);
-    const contentType = response.headers
-      .get("content-type")
-      ?.split(";", 1)[0]
-      ?.trim();
-    if (
-      !contentType ||
-      (!textMimeTypes.has(contentType) &&
-        contentType !== "application/octet-stream")
-    ) {
-      await response.body?.cancel();
-      throw new Error("Google Drive did not return supported text content.");
-    }
-    const body = await boundedText(
-      response,
-      maximumReadBytes,
-      ctx.abortSignal,
-      true
-    );
-    return {
-      id: file.id,
-      name: file.name,
-      mimeType: file.mimeType,
-      text: body.text.slice(0, maximumTextCharacters),
-      truncated: body.truncated || body.text.length > maximumTextCharacters,
-      untrustedContent: true as const,
-    };
-  });
+      metadataUrl.searchParams.set(
+        "fields",
+        "id,name,mimeType,size,trashed,capabilities(canDownload)"
+      );
+      const metadataBody = await boundedText(
+        await driveRequest(metadataUrl, token, ctx.abortSignal),
+        maximumReadBytes,
+        ctx.abortSignal,
+        false
+      );
+      let file: z.infer<typeof metadataSchema>;
+      try {
+        file = metadataSchema.parse(JSON.parse(metadataBody.text));
+      } catch {
+        throw new Error("Google Drive returned invalid file metadata.");
+      }
+      if (
+        file.id !== fileId ||
+        (expectedName !== undefined && file.name !== expectedName) ||
+        file.trashed ||
+        file.capabilities?.canDownload === false
+      )
+        throw new Error("This Drive file is not available for text reading.");
+      const nativeDocument =
+        file.mimeType === "application/vnd.google-apps.document";
+      if (!nativeDocument && !textMimeTypes.has(file.mimeType))
+        throw new Error(
+          "Drive reading supports Google Docs and plain text, Markdown, CSV or JSON files only."
+        );
+      if (!nativeDocument && file.size && Number(file.size) > 2 * 1024 * 1024)
+        throw new Error(
+          "This Drive file is too large for a bounded text read."
+        );
+      const contentUrl = new URL(
+        `https://www.googleapis.com/drive/v3/files/${fileId}${nativeDocument ? "/export" : ""}`
+      );
+      contentUrl.searchParams.set(
+        nativeDocument ? "mimeType" : "alt",
+        nativeDocument ? "text/plain" : "media"
+      );
+      const response = await driveRequest(contentUrl, token, ctx.abortSignal);
+      const contentType = response.headers
+        .get("content-type")
+        ?.split(";", 1)[0]
+        ?.trim();
+      if (
+        !contentType ||
+        (!textMimeTypes.has(contentType) &&
+          contentType !== "application/octet-stream")
+      ) {
+        await response.body?.cancel();
+        throw new Error("Google Drive did not return supported text content.");
+      }
+      const body = await boundedText(
+        response,
+        maximumReadBytes,
+        ctx.abortSignal,
+        true
+      );
+      return {
+        id: file.id,
+        name: file.name,
+        mimeType: file.mimeType,
+        text: body.text.slice(0, maximumTextCharacters),
+        truncated: body.truncated || body.text.length > maximumTextCharacters,
+        untrustedContent: true as const,
+      };
+    },
+    "drive.read"
+  );
 }
 
 async function driveRequest(url: URL, token: string, signal: AbortSignal) {

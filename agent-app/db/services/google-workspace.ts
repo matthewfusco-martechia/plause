@@ -25,6 +25,14 @@ import {
   googleWorkspaceCallbackPath,
   googleWorkspaceReviewUrl,
   googleWorkspaceScopes,
+  googleWorkspaceWriteScopes,
+  googleWorkspaceAccessSchema,
+  googleWorkspaceCapabilities,
+  googleWorkspaceGrantedCapabilities,
+  googleWorkspaceScopesCover,
+  reviewedGoogleWorkspaceScopes,
+  hasGoogleWorkspaceGrant,
+  type GoogleWorkspaceCapability,
 } from "@shared/google-workspace/connection";
 
 const tokenEndpoint = "https://oauth2.googleapis.com/token";
@@ -34,6 +42,7 @@ const opaqueSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
 const verifierSchema = z.strictObject({
   verifier: opaqueSchema,
   nonce: opaqueSchema,
+  access: googleWorkspaceAccessSchema,
 });
 const tokensSchema = z.strictObject({
   accessToken: z.string().min(1).max(16_384),
@@ -59,9 +68,9 @@ const identitySchema = z.object({
 });
 
 export class GoogleWorkspaceConnectionRequiredError extends Error {
-  constructor() {
+  constructor(capability?: GoogleWorkspaceCapability) {
     super(
-      `Connect Google Workspace at ${applicationOrigin()}${googleWorkspaceReviewUrl} before continuing.`
+      `${capability ? `Review permission to ${googleWorkspaceCapabilities[capability].label.toLowerCase()}` : "Connect Google Workspace"} at ${applicationOrigin()}${googleWorkspaceReviewUrl} before continuing.`
     );
     this.name = "GoogleWorkspaceConnectionRequiredError";
   }
@@ -123,19 +132,6 @@ async function retireGoogleActions(
     .where(eq(googleActionDispatches.workspaceId, scope.workspaceId));
 }
 
-function hasRequiredScopes(value: string | null | undefined) {
-  const granted = new Set(
-    (value ?? "").split(/\s+/u).map((scope) => {
-      if (scope === "https://www.googleapis.com/auth/userinfo.email")
-        return "email";
-      if (scope === "https://www.googleapis.com/auth/userinfo.profile")
-        return "profile";
-      return scope;
-    })
-  );
-  return googleWorkspaceScopes.every((scope) => granted.has(scope));
-}
-
 function storedTokens(value: string) {
   try {
     return tokensSchema.parse(JSON.parse(value));
@@ -153,6 +149,7 @@ export async function readGoogleWorkspaceConnection(scope: AccessScope) {
       state: "unavailable" as const,
       accountLabel: null,
       revocationPending: false,
+      capabilities: [],
     };
   const [connection] = await db
     .select()
@@ -167,17 +164,23 @@ export async function readGoogleWorkspaceConnection(scope: AccessScope) {
         ? ("connected" as const)
         : ("disconnected" as const),
     revocationPending: connection?.revocationPending ?? false,
+    capabilities:
+      connection?.status === "connected"
+        ? googleWorkspaceGrantedCapabilities(connection.grantedScopes)
+        : [],
   };
 }
 
 export async function beginGoogleWorkspaceOAuth(
   scope: AccessScope,
-  sessionId: string
+  sessionId: string,
+  access: z.infer<typeof googleWorkspaceAccessSchema> = "read"
 ) {
   ownedScope(scope);
   if (!googleWorkspaceConfigured())
     throw new GoogleWorkspaceConnectionRequiredError();
   const redirectUri = callbackUrl();
+  access = googleWorkspaceAccessSchema.parse(access);
   const session = z.string().min(1).max(1024).parse(sessionId);
   const state = randomBytes(32).toString("base64url");
   const browserToken = randomBytes(32).toString("base64url");
@@ -186,7 +189,7 @@ export async function beginGoogleWorkspaceOAuth(
   const encryptedVerifier = await encryptWorkspaceValue(
     scope,
     "google-oauth-state",
-    JSON.stringify({ verifier, nonce })
+    JSON.stringify({ verifier, nonce, access })
   );
   const expiresAt = new Date(Date.now() + 10 * 60_000);
   await db.transaction(async (tx) => {
@@ -241,7 +244,10 @@ export async function beginGoogleWorkspaceOAuth(
     client_id: env.GOOGLE_CLIENT_ID ?? "",
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: googleWorkspaceScopes.join(" "),
+    scope: (access === "write"
+      ? googleWorkspaceWriteScopes
+      : googleWorkspaceScopes
+    ).join(" "),
     access_type: "offline",
     prompt: "consent select_account",
     state,
@@ -382,13 +388,17 @@ export async function completeGoogleWorkspaceOAuth(
     })
   );
   const tokens = tokenResponseSchema.parse(JSON.parse(tokenBody));
+  const effectiveScopes = reviewedGoogleWorkspaceScopes(
+    tokens.scope,
+    verifier.access
+  ).join(" ");
   if (
     !tokens.id_token ||
     !tokens.refresh_token ||
-    !hasRequiredScopes(tokens.scope)
+    !hasGoogleWorkspaceGrant(effectiveScopes)
   )
     throw new Error(
-      "Google did not grant the reviewed permissions and offline access."
+      "Google did not grant a reviewed service and offline access."
     );
   const certificates = z
     .record(z.string(), z.string())
@@ -425,7 +435,7 @@ export async function completeGoogleWorkspaceOAuth(
         : "Google account",
       encryptedTokens,
       accessExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
-      grantedScopes: tokens.scope,
+      grantedScopes: effectiveScopes,
       updatedAt: new Date(),
     })
     .where(
@@ -445,13 +455,17 @@ export async function completeGoogleWorkspaceOAuth(
 
 export async function assertGoogleWorkspaceVersion(
   scope: AccessScope,
-  version: number
+  version: number,
+  capability: GoogleWorkspaceCapability
 ) {
   ownedScope(scope);
   if (!googleWorkspaceConfigured())
     throw new GoogleWorkspaceConnectionRequiredError();
   const [row] = await db
-    .select({ version: googleWorkspaceConnections.version })
+    .select({
+      version: googleWorkspaceConnections.version,
+      grantedScopes: googleWorkspaceConnections.grantedScopes,
+    })
     .from(googleWorkspaceConnections)
     .where(
       and(
@@ -462,10 +476,18 @@ export async function assertGoogleWorkspaceVersion(
       )
     )
     .limit(1);
-  if (!row) throw new GoogleWorkspaceConnectionRequiredError();
+  if (
+    !row ||
+    !hasGoogleWorkspaceGrant(row.grantedScopes) ||
+    !googleWorkspaceGrantedCapabilities(row.grantedScopes).includes(capability)
+  )
+    throw new GoogleWorkspaceConnectionRequiredError(capability);
 }
 
-export async function readGoogleWorkspaceGrantVersion(scope: AccessScope) {
+export async function readGoogleWorkspaceGrantVersion(
+  scope: AccessScope,
+  capability: GoogleWorkspaceCapability
+) {
   ownedScope(scope);
   if (!googleWorkspaceConfigured())
     throw new GoogleWorkspaceConnectionRequiredError();
@@ -480,13 +502,18 @@ export async function readGoogleWorkspaceGrantVersion(scope: AccessScope) {
       )
     )
     .limit(1);
-  if (!row?.encryptedTokens || !hasRequiredScopes(row.grantedScopes))
-    throw new GoogleWorkspaceConnectionRequiredError();
+  if (
+    !row?.encryptedTokens ||
+    !hasGoogleWorkspaceGrant(row.grantedScopes) ||
+    !googleWorkspaceGrantedCapabilities(row.grantedScopes).includes(capability)
+  )
+    throw new GoogleWorkspaceConnectionRequiredError(capability);
   return row.version;
 }
 
 export async function getGoogleWorkspaceAccessToken(
   scope: AccessScope,
+  capability: GoogleWorkspaceCapability,
   signal?: AbortSignal
 ) {
   ownedScope(scope);
@@ -503,9 +530,15 @@ export async function getGoogleWorkspaceAccessToken(
       row?.status !== "connected" ||
       row.revocationPending ||
       !row.encryptedTokens ||
-      !hasRequiredScopes(row.grantedScopes)
+      !hasGoogleWorkspaceGrant(row.grantedScopes)
     )
       return null;
+    if (
+      !googleWorkspaceGrantedCapabilities(row.grantedScopes).includes(
+        capability
+      )
+    )
+      throw new GoogleWorkspaceConnectionRequiredError(capability);
     const tokens = storedTokens(
       await decryptWorkspaceValue(
         scope,
@@ -534,7 +567,13 @@ export async function getGoogleWorkspaceAccessToken(
           )
         )
       );
-      if (response.scope && !hasRequiredScopes(response.scope))
+      if (
+        response.scope &&
+        !googleWorkspaceScopesCover(
+          response.scope,
+          (row.grantedScopes ?? "").split(/\s+/u)
+        )
+      )
         throw new Error("Google permissions changed.");
       const encryptedTokens = await encryptWorkspaceValue(
         scope,

@@ -12,6 +12,7 @@ export default {
     "agent/schedules/**/*.ts",
     "agent/tools/**/*.ts",
     "db/drizzle.config.ts",
+    "ops/cloudflare/*.{mjs,ts}",
     // Drizzle consumes every table and relation exported by this schema barrel.
     "db/schema/index.ts",
     "evals/**/*.eval.ts",
@@ -24,6 +25,8 @@ export default {
     "tests/runtime/sandbox.ts",
   ],
   ignoreDependencies: [
+    // Eve loads this external workflow world from agent configuration.
+    "@workflow/world-postgres",
     // Imported through the owning Tailwind stylesheet rather than TypeScript.
     "shadcn",
     "tailwindcss",

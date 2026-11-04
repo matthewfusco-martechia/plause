@@ -51,4 +51,5 @@ export async function assertEnrolledWorkspaceUser(scope: AccessScope) {
   ) {
     throw new Error("Private Plause access is unavailable for this account.");
   }
+  return user.data.phoneNumber;
 }

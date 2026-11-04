@@ -7,7 +7,11 @@ export const LINQ_API_BASE_URL = "https://api.linqapp.com/api/partner";
 
 export const linqCredentials = {
   apiKey() {
-    if (!env.LINQ_API_KEY || !env.LINQ_PHONE_NUMBER) {
+    if (
+      env.MESSAGING_PROVIDER !== "linq" ||
+      !env.LINQ_API_KEY ||
+      !env.LINQ_PHONE_NUMBER
+    ) {
       throw new Error(
         "Direct Linq credentials and phone number are not configured."
       );
@@ -34,6 +38,8 @@ export async function sendNativeLinqMessage(
     async fetch(input, init) {
       // The SDK may await request preparation; recheck at its actual HTTP boundary.
       await assertEnrolledWorkspaceUser(scope);
+      if (linqCredentials.apiKey() !== apiKey)
+        throw new Error("Messaging configuration changed before delivery.");
       return globalThis.fetch(input, init);
     },
   });

@@ -30,7 +30,7 @@ export default defineConfig({
   },
   test: {
     // Several suites initialize embedded Postgres; bound contention without relaxing timeouts.
-    maxWorkers: 4,
+    maxWorkers: 1,
     setupFiles: ["./tests/setup-env.ts"],
   },
 });

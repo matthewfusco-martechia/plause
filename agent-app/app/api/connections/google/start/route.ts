@@ -1,6 +1,7 @@
 import { beginGoogleWorkspaceOAuth } from "@db/services/google-workspace";
 import { applicationOrigin } from "@shared/environment/origin";
 import { googleBrowserCookie, readGoogleBrowserSession } from "../_session";
+import { googleWorkspaceAccessSchema } from "@shared/google-workspace/connection";
 
 export const runtime = "nodejs";
 
@@ -48,7 +49,12 @@ export async function POST(request: Request) {
       reader.releaseLock();
     }
     const form = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+    const access = googleWorkspaceAccessSchema.safeParse(
+      form.get("access") ?? "read"
+    );
     if (
+      form.getAll("access").length > 1 ||
+      !access.success ||
       form.getAll("reviewedPermissions").length !== 1 ||
       form.get("reviewedPermissions") !== "yes"
     )
@@ -58,7 +64,8 @@ export async function POST(request: Request) {
       );
     const started = await beginGoogleWorkspaceOAuth(
       session.scope,
-      session.sessionId
+      session.sessionId,
+      access.data
     );
     return new Response(null, {
       status: 303,

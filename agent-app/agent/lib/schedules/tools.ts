@@ -12,12 +12,26 @@ export function scheduleOwner(context: ToolContext) {
     throw new Error("An authenticated user is required to manage schedules.");
   }
   const conversationChannel = z
-    .enum(["eve", "linq"])
+    .enum(["eve", "linq", "inkbox"])
     .parse(auth.attributes.conversationChannel);
   const conversationId =
     conversationChannel === "eve"
       ? context.session.id
-      : z.string().startsWith("linq:").parse(auth.attributes.conversationId);
+      : conversationChannel === "linq"
+        ? z.string().startsWith("linq:").parse(auth.attributes.conversationId)
+        : z
+            .string()
+            .refine((value) => {
+              const parts = value.split(":");
+              return (
+                parts.length === 4 &&
+                parts[0] === "inkbox" &&
+                z.uuid().safeParse(parts[1]).success &&
+                z.uuid().safeParse(parts[2]).success &&
+                z.uuid().safeParse(parts[3]).success
+              );
+            })
+            .parse(auth.attributes.conversationId);
   return {
     conversation: { conversationChannel, conversationId },
     scope: scopeFromPrincipal(auth),
@@ -26,8 +40,12 @@ export function scheduleOwner(context: ToolContext) {
 
 export function scheduleReplyAnchor(context: ToolContext) {
   const auth = context.session.auth.current;
-  if (auth?.attributes.conversationChannel !== "linq") return undefined;
-  const messageId = z.string().min(1).safeParse(auth.attributes.linqMessageId);
+  const channel = auth?.attributes.conversationChannel;
+  if (channel !== "linq" && channel !== "inkbox") return undefined;
+  const messageId =
+    channel === "inkbox"
+      ? z.uuid().safeParse(auth?.attributes.inkboxMessageId)
+      : z.string().min(1).safeParse(auth?.attributes.linqMessageId);
   return messageId.success ? messageId.data : undefined;
 }
 
@@ -43,6 +61,12 @@ export function scheduleSummary(
     prompt: job.prompt,
     status: job.status,
     timing: job.timing,
+    notifications: job.notificationPolicy
+      ? {
+          timezone: job.notificationPolicy.timezone,
+          quietHours: job.notificationPolicy.quietHours,
+        }
+      : null,
   };
 }
 

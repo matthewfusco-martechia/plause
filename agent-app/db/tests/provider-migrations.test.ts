@@ -2,14 +2,14 @@ import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
 import * as schema from "../schema";
 import { accessScopeForUser } from "@shared/identity/access-scope";
 
 const client = new PGlite();
 // Start the embedded engine separately from the migration/erasure assertions.
-beforeAll(() => client.waitReady);
+await client.waitReady;
 afterAll(() => client.close());
 
 it("applies the full migration chain and erases provider payloads while retaining uncertainty tombstones", async () => {

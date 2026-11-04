@@ -4,12 +4,6 @@ import { z } from "zod";
 
 const linqApiErrorSchema = z.object({
   code: z.string(),
-  linqError: z.object({
-    code: z.number(),
-    message: z.string(),
-    status: z.number(),
-    trace_id: z.string(),
-  }),
   message: z.string(),
 });
 
@@ -20,7 +14,7 @@ describe("Linq phone authentication", () => {
     vi.unstubAllGlobals();
   });
 
-  it("preserves provider diagnostics and returns actionable client copy", async () => {
+  it("returns fixed client copy without provider diagnostics or secrets", async () => {
     vi.stubEnv(
       "BETTER_AUTH_SECRET",
       "0123456789abcdefghijklmnopqrstuvwxyzABCD"
@@ -28,6 +22,7 @@ describe("Linq phone authentication", () => {
     vi.stubEnv("PRIVATE_ALLOWED_PHONE_NUMBERS", "+12025550123");
     vi.stubEnv("LINQ_API_KEY", "direct-test-api-key");
     vi.stubEnv("LINQ_PHONE_NUMBER", "+15550100000");
+    vi.stubEnv("MESSAGING_PROVIDER", "linq");
     vi.stubGlobal(
       "fetch",
       vi.fn<typeof fetch>().mockResolvedValue(
@@ -57,14 +52,10 @@ describe("Linq phone authentication", () => {
 
     const body = linqApiErrorSchema.parse(error.body);
     expect(body).toMatchObject({
-      code: "LINQ_SENDING_LINE_UNAVAILABLE",
-      linqError: {
-        code: 2015,
-        message: "no eligible sending line available",
-        status: 409,
-        trace_id: "trace-123",
-      },
+      code: "MESSAGING_UNAVAILABLE",
     });
-    expect(body.message).toContain("line's health");
+    expect(body.message).toContain("Review its connection");
+    expect(error.body).not.toHaveProperty("linqError");
+    expect(JSON.stringify(error.body)).not.toContain("trace-123");
   });
 });

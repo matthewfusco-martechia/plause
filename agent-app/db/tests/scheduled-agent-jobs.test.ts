@@ -33,6 +33,8 @@ describe("scheduled agent jobs", () => {
       "0010_rapid_cerise.sql",
       "0011_faulty_unicorn.sql",
       "0012_harsh_domino.sql",
+      "0015_direct_providers.sql",
+      "0021_schedule_notifications.sql",
     ]) {
       await applyMigration(client, migration);
     }
@@ -62,6 +64,12 @@ describe("scheduled agent jobs", () => {
       alice,
       {
         ...aliceConversation,
+        notificationPolicy: {
+          timezone: "UTC",
+          quietHours: null,
+          consentedBy: alice.userId,
+          consentedAt: now.toISOString(),
+        },
         missedRunPolicy: "run_latest",
         prompt: "Check for a material price change.",
         timing: {
@@ -400,10 +408,16 @@ describe("scheduled agent jobs", () => {
     await jobs.updateScheduledAgentJob(alice, aliceConversation, created.id, {
       status: "paused",
     });
-    await jobs.createScheduledAgentJob(
+    const recoveryJob = await jobs.createScheduledAgentJob(
       bob,
       {
         ...bobConversation,
+        notificationPolicy: {
+          timezone: "UTC",
+          quietHours: null,
+          consentedBy: bob.userId,
+          consentedAt: now.toISOString(),
+        },
         missedRunPolicy: "run_latest",
         prompt: "Check the hourly value.",
         timing: {
@@ -463,7 +477,8 @@ describe("scheduled agent jobs", () => {
       .insert(schema.scheduledAgentRuns)
       .values({
         attempts: 1,
-        jobId: created.id,
+        jobId: recoveryJob.id,
+        jobRevision: recoveryJob.revision,
         leaseExpiresAt: new Date("2026-09-09T13:05:00.000Z"),
         leaseToken: "00000000-0000-4000-8000-000000000010",
         scheduledFor: new Date("2026-09-09T13:00:00.000Z"),
@@ -485,7 +500,8 @@ describe("scheduled agent jobs", () => {
       .insert(schema.scheduledAgentRuns)
       .values({
         attempts: 3,
-        jobId: created.id,
+        jobId: recoveryJob.id,
+        jobRevision: recoveryJob.revision,
         leaseExpiresAt: new Date("2026-09-09T14:05:00.000Z"),
         leaseToken: "00000000-0000-4000-8000-000000000011",
         scheduledFor: new Date("2026-09-09T14:00:00.000Z"),

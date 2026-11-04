@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { defineEval, type EveEvalContext, type EveEvalTurn } from "eve/evals";
 import { equals } from "eve/evals/expect";
-import type { SessionStreamEvent } from "eve/client";
+import { parseAnswers, type SessionStreamEvent } from "eve/client";
+import { APPROVE_OPTION_ID } from "eve/events";
 import { taskCompletionOutputSchema } from "@agent/subagents/browser-agent/lib/completion";
 
 const verifiedCompletion = {
@@ -71,6 +73,46 @@ function checkTaskCancelled(t: EveEvalContext, turn: EveEvalTurn) {
 export default [
   defineEval({
     description:
+      "Chains four Google tool contracts in one turn and retains the results for a follow-up without another read",
+    async test(t) {
+      const turn = await t.send("Google plan");
+      turn.expectOk();
+      const expected = [
+        "gmail-search",
+        "gmail-read-thread",
+        "drive-read-text",
+        "calendar-check-availability",
+      ];
+      const requests = turn.events.flatMap((event) =>
+        event.type === "call.requested" ? [event.data.capability.name] : []
+      );
+      t.check(requests, equals(expected));
+      for (const name of expected)
+        turn.calledTool(name, { status: "completed", count: 1 });
+      t.check(
+        turn.requireToolCall("gmail-read-thread").input,
+        equals({ threadId: "fixture-thread-42" })
+      );
+      t.check(
+        turn.requireToolCall("drive-read-text").input,
+        equals({ fileId: "fixture_notes" })
+      );
+      t.check(
+        turn.reply,
+        equals("Fictional plan: lunch and water; 15:00 UTC is free.")
+      );
+      const remembered = await turn.session.send("Recall Google plan");
+      remembered.expectOk();
+      t.check(
+        remembered.events.filter((event) => event.type === "call.requested")
+          .length,
+        equals(0)
+      );
+      t.check(remembered.reply, equals(turn.reply));
+    },
+  }),
+  defineEval({
+    description:
       "Completes background browser work and resumes the same structured worker",
     async test(t) {
       const first = await t.send("Start");
@@ -84,6 +126,70 @@ export default [
       t.check(browserTaskId(resumed), equals(taskId));
       t.check(workerSessionId(resumed.events), equals(worker));
       checkCompletion(t, resumed);
+    },
+  }),
+  defineEval({
+    description:
+      "Routes a delegated approval once even when the parent retains delivery context",
+    async test(t) {
+      const session = await t.session();
+      const live = await session.start("Approve");
+      const opened = await live.waitForEvent("child.opened", {
+        data: { name: "browser-agent" },
+      });
+      const request = await live.waitForEvent("interaction.opened", {
+        data: { request: { kind: "approval" } },
+      });
+      const origin = request.data.origin;
+      if (!origin)
+        throw new Error("The approval was not relayed from a child session.");
+      t.check(origin.sessionId, equals(opened.data.sessionId));
+      t.check(origin.call?.name, equals("require_approval"));
+      const marker = join(
+        ".eve",
+        "fixture-tool",
+        opened.data.sessionId,
+        "approved"
+      );
+      t.check(existsSync(marker), equals(false));
+
+      // The Inkbox resolver produces this validated parent ID before admission;
+      // public respond must forward it to the child's original interaction.
+      const answered = await session.respond(
+        parseAnswers([
+          {
+            interactionId: request.data.interactionId,
+            optionId: APPROVE_OPTION_ID,
+          },
+        ]),
+        { clientContext: { source: "fixture approval reply" } }
+      );
+      answered.expectOk();
+      await live.result();
+      checkCompletion(t, answered);
+      t.check(await readFile(marker, "utf8"), equals("executed\n"));
+
+      const worker = session.agent(opened);
+      let executions = 0;
+      let settled = 0;
+      for await (const event of worker.stream({
+        follow: false,
+        signal: t.abortSignal,
+      })) {
+        if (
+          event.type === "call.started" &&
+          event.data.callId === origin.call?.callId
+        )
+          executions += 1;
+        if (
+          event.type === "interaction.settled" &&
+          event.data.interactionId === origin.interactionId &&
+          event.data.outcome === "accepted"
+        )
+          settled += 1;
+      }
+      t.check(executions, equals(1));
+      t.check(settled, equals(1));
     },
   }),
   defineEval({

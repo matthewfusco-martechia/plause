@@ -6,6 +6,7 @@ import { processLinqInbox } from "@agent/lib/linq/inbox";
 import { linqDigest } from "@db/services/linq-inbox";
 
 const controls = vi.hoisted(() => ({
+  provider: "linq",
   claim: vi.fn<typeof Inbox.claimLinqInbox>(),
   decrypt: vi.fn<typeof Inbox.decryptLinqInbox>(),
   dispatch: vi.fn<typeof Inbox.markLinqInboxDispatched>(),
@@ -21,6 +22,9 @@ vi.mock("@shared/environment", async (original) => {
     ...loaded,
     env: {
       ...loaded.env,
+      get MESSAGING_PROVIDER() {
+        return controls.provider;
+      },
       LINQ_API_KEY: "fixture-linq-key",
       LINQ_PHONE_NUMBER: "+15550100000",
       LINQ_WEBHOOK_SIGNING_SECRET: "fixture-signing-key",
@@ -65,6 +69,7 @@ const body = JSON.stringify({
 });
 
 beforeEach(() => {
+  controls.provider = "linq";
   vi.clearAllMocks();
   controls.order.length = 0;
   controls.claim.mockResolvedValue([row()]);
@@ -80,6 +85,30 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Linq inbox relay worker", () => {
+  it.each(["disabled", "inkbox"])(
+    "does not claim or relay old Linq inputs when %s is selected",
+    async (provider) => {
+      controls.provider = provider;
+      const send = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", send);
+      await processLinqInbox();
+      expect(controls.claim).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+    }
+  );
+
+  it("cancels an unsent claim if provider selection changes during decrypt", async () => {
+    controls.decrypt.mockImplementationOnce(async () => {
+      controls.provider = "inkbox";
+      return body;
+    });
+    const send = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", send);
+    await processLinqInbox();
+    expect(controls.cancel).toHaveBeenCalledOnce();
+    expect(controls.dispatch).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
   it("persists dispatch before one fixed-origin signed callback without provider traffic", async () => {
     const send = vi.fn<typeof fetch>().mockImplementation(async () => {
       controls.order.push("http");

@@ -56,10 +56,34 @@ const inputSchema = z.object({
 });
 
 const manageBrowsers = defineTool({
-  approval: (context) =>
-    context.toolInput?.action === "list" || context.toolInput?.action === "get"
-      ? "not-applicable"
-      : browserActionApproval<z.infer<typeof inputSchema>>()(context),
+  approval: {
+    request: (context) =>
+      context.toolInput?.action === "list" ||
+      context.toolInput?.action === "get"
+        ? "not-applicable"
+        : browserActionApproval<z.infer<typeof inputSchema>>()(context),
+    prompt: ({ input }) => {
+      if (input.action === "create") {
+        const target = input.start_url ?? "a blank page";
+        const timeout = input.timeout_seconds ?? browserTimeoutFloorSeconds;
+        const save = input.save_changes
+          ? " and save changes to its profile"
+          : "";
+        return `Open one browser at ${target} with a ${String(timeout)}-second timeout${save}?`;
+      }
+      const session = input.session_id ?? "(missing session ID)";
+      if (input.action === "delete") {
+        return `Close browser ${session}?`;
+      }
+      if (
+        input.viewport_width !== undefined &&
+        input.viewport_height !== undefined
+      ) {
+        return `Update browser ${session} to a ${String(input.viewport_width)} × ${String(input.viewport_height)} viewport?`;
+      }
+      return `Review browser ${session}?`;
+    },
+  },
   description:
     'Manage browser sessions backed by the workspace persistent profile. Creating, updating, and deleting require enabled browser actions and approval of each exact call, including start_url navigation. Create read-only profiles by default so tasks can run in parallel; these still permit page changes when action tools are separately approved. Only one profile writer may be active. Use "list" or "get" to inspect existing sessions without an action approval.',
   inputSchema,

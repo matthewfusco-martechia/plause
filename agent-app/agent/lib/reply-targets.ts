@@ -7,10 +7,26 @@ const linqReplyTargetSchema = z.strictObject({
   conversationId: z.string().startsWith("linq:"),
   messageId: z.string().min(1),
 });
+const inkboxConversationSchema = z.string().refine((value) => {
+  const parts = value.split(":");
+  return (
+    parts.length === 4 &&
+    parts[0] === "inkbox" &&
+    z.uuid().safeParse(parts[1]).success &&
+    z.uuid().safeParse(parts[2]).success &&
+    z.uuid().safeParse(parts[3]).success
+  );
+});
+const inkboxReplyTargetSchema = z.strictObject({
+  conversationId: inkboxConversationSchema,
+  messageId: z.uuid(),
+});
 
-type LinqReplyTarget = z.infer<typeof linqReplyTargetSchema>;
+type MessageReplyTarget =
+  | z.infer<typeof linqReplyTargetSchema>
+  | z.infer<typeof inkboxReplyTargetSchema>;
 
-const backgroundReplyTargets = defineState<Record<string, LinqReplyTarget>>(
+const backgroundReplyTargets = defineState<Record<string, MessageReplyTarget>>(
   "open-instinct.background-reply-targets",
   () => ({})
 );
@@ -21,7 +37,7 @@ export function registerBackgroundReplyTarget(
   taskId: string,
   auth: SessionAuth
 ) {
-  const target = currentLinqReplyTarget(auth);
+  const target = currentReplyTarget(auth);
   if (!target) return;
 
   backgroundReplyTargets.update((current) =>
@@ -38,13 +54,31 @@ export function resolveLinqReplyTarget(
   reference: ReplyReference | undefined,
   auth: SessionAuth
 ) {
+  const caller = auth.current ?? auth.initiator;
+  if (caller?.attributes.conversationChannel !== "linq") return undefined;
+  return resolveReplyTarget(reference, auth);
+}
+
+export function resolveInkboxReplyTarget(
+  reference: ReplyReference | undefined,
+  auth: SessionAuth
+) {
+  const caller = auth.current ?? auth.initiator;
+  if (caller?.attributes.conversationChannel !== "inkbox") return undefined;
+  return resolveReplyTarget(reference, auth);
+}
+
+function resolveReplyTarget(
+  reference: ReplyReference | undefined,
+  auth: SessionAuth
+) {
   if (!reference) return undefined;
 
-  const conversationId = currentLinqConversationId(auth);
+  const conversationId = currentConversationId(auth);
   if (!conversationId) return undefined;
 
   if (reference.kind === "current") {
-    return currentLinqReplyTarget(auth);
+    return currentReplyTarget(auth);
   }
 
   if (reference.kind === "task") {
@@ -59,11 +93,17 @@ export function resolveLinqReplyTarget(
   return {
     conversationId,
     messageId: report.replyAnchorMessageId,
-  } satisfies LinqReplyTarget;
+  } satisfies MessageReplyTarget;
 }
 
-function currentLinqConversationId(auth: SessionAuth) {
+function currentConversationId(auth: SessionAuth) {
   const caller = auth.current ?? auth.initiator;
+  if (caller?.attributes.conversationChannel === "inkbox") {
+    const parsed = inkboxConversationSchema.safeParse(
+      caller.attributes.conversationId
+    );
+    return parsed.success ? parsed.data : undefined;
+  }
   if (caller?.attributes.conversationChannel !== "linq") return undefined;
   const parsed = z
     .string()
@@ -72,8 +112,15 @@ function currentLinqConversationId(auth: SessionAuth) {
   return parsed.success ? parsed.data : undefined;
 }
 
-function currentLinqReplyTarget(auth: SessionAuth) {
+function currentReplyTarget(auth: SessionAuth) {
   const caller = auth.current;
+  if (caller?.attributes.conversationChannel === "inkbox") {
+    const parsed = inkboxReplyTargetSchema.safeParse({
+      conversationId: caller.attributes.conversationId,
+      messageId: caller.attributes.inkboxMessageId,
+    });
+    return parsed.success ? parsed.data : undefined;
+  }
   if (caller?.attributes.conversationChannel !== "linq") return undefined;
   const parsed = linqReplyTargetSchema.safeParse({
     conversationId: caller.attributes.conversationId,

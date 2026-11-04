@@ -18,12 +18,20 @@ import {
 import { Input } from "@web/components/ui/input";
 import { PhoneNumberField } from "./phone-field";
 
+export type MessagingOnboarding =
+  | {
+      readonly provider: "inkbox";
+      readonly phoneNumber: string;
+      readonly connectCommand: string;
+    }
+  | { readonly provider: "linq"; readonly phoneNumber: string };
+
 export function PhoneOtpAuthForm({
   callbackUrl,
-  linqPhoneNumber,
+  onboarding,
 }: {
   readonly callbackUrl: string;
-  readonly linqPhoneNumber?: string;
+  readonly onboarding?: MessagingOnboarding;
 }) {
   const sendOtp = useMutation({
     mutationFn: async (phoneNumberValue: string) => {
@@ -57,7 +65,7 @@ export function PhoneOtpAuthForm({
 
   return (
     <>
-      <FirstTimeLinqSetup phoneNumber={linqPhoneNumber} />
+      <FirstTimeMessagesSetup onboarding={onboarding} />
       <form
         className="mt-4"
         onSubmit={(event) => {
@@ -154,43 +162,61 @@ function VerificationCodeForm({
   );
 }
 
-function FirstTimeLinqSetup({
-  phoneNumber,
+function FirstTimeMessagesSetup({
+  onboarding,
 }: {
-  readonly phoneNumber?: string;
+  readonly onboarding?: MessagingOnboarding;
 }) {
+  const href = onboarding
+    ? onboarding.provider === "inkbox"
+      ? `sms:${onboarding.phoneNumber}?&body=${encodeURIComponent(onboarding.connectCommand)}`
+      : `sms:${onboarding.phoneNumber}`
+    : undefined;
   return (
     <Alert className="mt-6" variant="information">
       <MessageSquareIcon />
       <AlertTitle>First time signing in?</AlertTitle>
       <AlertDescription>
         <p>
-          Linq requires one message from your phone before it can send a sign-in
-          code.
+          Connect with Plause in Messages from the phone number you will enter
+          below. A Messages connection alone does not create your Plause
+          account; you still need the sign-in code.
         </p>
         <ol className="mt-2 list-decimal space-y-1 pl-4">
-          <li>Open Messages to the Linq number.</li>
-          <li>Send any message from the phone number you will enter below.</li>
+          {onboarding?.provider === "inkbox" ? (
+            <>
+              <li>
+                Open Messages to the connection router and send{" "}
+                <code>{onboarding.connectCommand}</code>.
+              </li>
+              <li>
+                Follow the router instructions, then send <code>hi</code> to the
+                connected Plause conversation.
+              </li>
+            </>
+          ) : (
+            <>
+              <li>Open Messages to the Plause number.</li>
+              <li>
+                Send <code>hi</code> from the phone number you will enter below.
+              </li>
+            </>
+          )}
           <li>Return here and select Send code.</li>
         </ol>
-        {phoneNumber ? (
+        {href ? (
           <Button
             className="mt-3 w-full"
             nativeButton={false}
-            render={
-              <a
-                aria-label="Text Linq in Messages"
-                href={`sms:${phoneNumber}`}
-              />
-            }
+            render={<a aria-label="Connect Plause in Messages" href={href} />}
             variant="outline"
           >
-            Text Linq in Messages
+            Open Messages
           </Button>
         ) : (
           <p className="mt-2">
-            Find the Linq number in Vercel Connect or the Linq dashboard, text
-            it once, then return here.
+            Connection details are unavailable. Ask the Plause operator for the
+            Messages setup steps before requesting a code.
           </p>
         )}
       </AlertDescription>
@@ -202,7 +228,20 @@ export function phoneOtpErrorMessage(error: {
   readonly code?: string;
   readonly message?: string;
 }) {
-  return error.code?.startsWith("LINQ_") && error.message
-    ? error.message
-    : "Unable to send a code. Please try again.";
+  switch (error.code) {
+    case "MESSAGING_CONNECT_REQUIRED":
+      return "Complete the Messages connection steps, then send hi to Plause from this phone before requesting a code.";
+    case "MESSAGING_OPTED_OUT":
+      return "This phone has opted out of messages. Re-enable messages before requesting a sign-in code.";
+    case "MESSAGING_DISABLED":
+    case "MESSAGING_NOT_CONFIGURED":
+      return "iMessage sign-in is unavailable for this deployment. Contact the Plause operator.";
+    case "MESSAGING_CODE_UNCONFIRMED":
+    case "MESSAGING_UNAVAILABLE":
+      return "The sign-in code could not be confirmed. Review the Messages connection before requesting another code.";
+    case "PRIVATE_ENROLLMENT_REQUIRED":
+      return "This private Plause installation is not accepting this phone number.";
+    default:
+      return "Unable to send a code. Please try again.";
+  }
 }

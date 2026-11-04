@@ -43,6 +43,7 @@ vi.mock("@db/services/auth/phone-user", () => ({
 }));
 
 const database = new PGlite();
+await database.waitReady;
 const scope = accessScopeForUser("better-auth:alice");
 const principal = {
   principalId: scope.userId,
@@ -74,6 +75,15 @@ beforeAll(async () => {
   await database.exec(
     await readFile("db/migrations/0015_direct_providers.sql", "utf8")
   );
+  await database.exec(
+    await readFile(
+      "db/migrations/0019_model_continuation_authority.sql",
+      "utf8"
+    )
+  );
+  await database.exec(
+    await readFile("db/migrations/0020_model_continuation_grants.sql", "utf8")
+  );
   const fixture = drizzle(database, { schema });
   // SAFETY: The real schema and query/transaction implementation are retained; only the driver is embedded.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- PGlite supplies the exercised Drizzle surface.
@@ -81,7 +91,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await database.exec(
-    "TRUNCATE model_provider_attempts, model_budget_accounts"
+    "TRUNCATE model_continuation_grants, model_provider_attempts, model_budget_accounts"
   );
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     Response.json({

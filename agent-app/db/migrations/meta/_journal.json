@@ -127,6 +127,34 @@
       "when": 1793659704277,
       "tag": "0017_browser_action_authority",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793714876811,
+      "tag": "0018_inkbox_messaging",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793737755031,
+      "tag": "0019_model_continuation_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793751939745,
+      "tag": "0020_model_continuation_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793755300685,
+      "tag": "0021_schedule_notifications",
+      "breakpoints": true
     }
   ]
 }

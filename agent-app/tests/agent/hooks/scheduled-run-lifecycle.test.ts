@@ -48,6 +48,12 @@ it.each(["result", "nothing_to_report"] as const)(
       alice,
       {
         ...aliceConversation,
+        notificationPolicy: {
+          timezone: "UTC",
+          quietHours: null,
+          consentedBy: alice.userId,
+          consentedAt: now.toISOString(),
+        },
         missedRunPolicy: "run_latest",
         prompt: "Check the price in the browser.",
         timing: {

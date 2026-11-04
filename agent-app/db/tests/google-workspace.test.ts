@@ -18,7 +18,11 @@ import * as Database from "@db";
 import * as schema from "@db/schema";
 import type * as Environment from "@shared/environment";
 import { accessScopeForUser } from "@shared/identity/access-scope";
-import { googleWorkspaceScopes } from "@shared/google-workspace/connection";
+import {
+  googleWorkspaceScopes,
+  googleWorkspaceWriteScopes,
+  googleWorkspaceCapabilities,
+} from "@shared/google-workspace/connection";
 import { decryptWorkspaceValue } from "@db/services/protected-values";
 import * as service from "@db/services/google-workspace";
 
@@ -35,6 +39,7 @@ vi.mock("@shared/environment", async (importOriginal) => {
 });
 
 const database = new PGlite();
+await database.waitReady;
 const alice = accessScopeForUser("better-auth:alice");
 const bob = accessScopeForUser("better-auth:bob");
 const sessionId = "fictional-browser-session";
@@ -134,8 +139,12 @@ function tokenResponse() {
   });
 }
 
-async function start() {
-  const result = await service.beginGoogleWorkspaceOAuth(alice, sessionId);
+async function start(access: "read" | "write" = "read") {
+  const result = await service.beginGoogleWorkspaceOAuth(
+    alice,
+    sessionId,
+    access
+  );
   authorization = new URL(result.authorizationUrl);
   return {
     ...result,
@@ -155,6 +164,103 @@ async function connected() {
 }
 
 describe("direct Google Workspace authorization", () => {
+  it("accepts a Calendar-only grant and keeps declined services unavailable", async () => {
+    tokenScopes = [
+      "openid",
+      "email",
+      "profile",
+      googleWorkspaceCapabilities["calendar.read"].scope,
+    ].join(" ");
+    await connected();
+    expect(await service.readGoogleWorkspaceConnection(alice)).toMatchObject({
+      state: "connected",
+      capabilities: ["calendar.read"],
+    });
+    vi.mocked(globalThis.fetch).mockClear();
+    await expect(
+      service.getGoogleWorkspaceAccessToken(alice, "calendar.read")
+    ).resolves.toMatchObject({ token: "fixture-access-token" });
+    await expect(
+      service.getGoogleWorkspaceAccessToken(alice, "gmail.read")
+    ).rejects.toThrow("read gmail");
+    await expect(
+      service.getGoogleWorkspaceAccessToken(alice, "calendar.availability")
+    ).rejects.toThrow("availability");
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not grant writes when Google returns an older broader grant to a read-only review", async () => {
+    tokenScopes = googleWorkspaceWriteScopes.join(" ");
+    await connected();
+    const state = await service.readGoogleWorkspaceConnection(alice);
+    expect(state.capabilities).toContain("gmail.read");
+    expect(state.capabilities).not.toContain("gmail.write");
+    expect(state.capabilities).not.toContain("calendar.write");
+    await expect(
+      service.getGoogleWorkspaceAccessToken(alice, "gmail.write")
+    ).rejects.toThrow("permission");
+    await expect(
+      service.readGoogleWorkspaceGrantVersion(alice, "calendar.write")
+    ).rejects.toThrow("permission");
+  });
+
+  it("binds an explicit write review to encrypted OAuth state", async () => {
+    const begun = await start("write");
+    expect(authorization.searchParams.get("scope")?.split(" ")).toEqual([
+      ...googleWorkspaceWriteScopes,
+    ]);
+    tokenScopes = googleWorkspaceWriteScopes.join(" ");
+    await service.completeGoogleWorkspaceOAuth(alice, begun.input);
+    expect(
+      (await service.readGoogleWorkspaceConnection(alice)).capabilities
+    ).toEqual(expect.arrayContaining(["gmail.write", "calendar.write"]));
+    await expect(
+      service.readGoogleWorkspaceGrantVersion(alice, "gmail.write")
+    ).resolves.toBeGreaterThan(0);
+  });
+
+  it("never expands reviewed permissions when a refresh returns broader scopes", async () => {
+    await connected();
+    await Database.db
+      .update(Database.googleWorkspaceConnections)
+      .set({ accessExpiresAt: new Date(Date.now() - 1000) });
+    tokenScopes = googleWorkspaceWriteScopes.join(" ");
+    await service.getGoogleWorkspaceAccessToken(alice, "gmail.read");
+    expect(
+      (await service.readGoogleWorkspaceConnection(alice)).capabilities
+    ).not.toContain("gmail.write");
+    await expect(
+      service.getGoogleWorkspaceAccessToken(alice, "gmail.write")
+    ).rejects.toThrow("permission");
+  });
+
+  it("fences the connection when refresh removes a previously available permission", async () => {
+    await connected();
+    const before = await service.getGoogleWorkspaceAccessToken(
+      alice,
+      "drive.read"
+    );
+    await Database.db
+      .update(Database.googleWorkspaceConnections)
+      .set({ accessExpiresAt: new Date(Date.now() - 1000) });
+    tokenScopes = [
+      "openid",
+      "email",
+      "profile",
+      googleWorkspaceCapabilities["calendar.read"].scope,
+    ].join(" ");
+    await expect(
+      service.getGoogleWorkspaceAccessToken(alice, "drive.read")
+    ).rejects.toThrow("/connections/google");
+    await expect(
+      service.assertGoogleWorkspaceVersion(alice, before.version, "drive.read")
+    ).rejects.toThrow("/connections/google");
+    expect(await service.readGoogleWorkspaceConnection(alice)).toMatchObject({
+      state: "disconnected",
+      capabilities: [],
+    });
+  });
+
   it("stores only hashed browser/state/session bindings and an encrypted PKCE verifier", async () => {
     const result = await start();
     expect(authorization.origin + authorization.pathname).toBe(
@@ -213,16 +319,18 @@ describe("direct Google Workspace authorization", () => {
     expect(row?.encryptedTokens).not.toContain("fixture-access-token");
     expect(row?.encryptedTokens).not.toContain("fixture-refresh-token");
     expect(row?.accountSubject).toBe("fixture-google-subject");
-    expect(await service.readGoogleWorkspaceGrantVersion(alice)).toBe(
-      row?.version
-    );
-    expect(await service.getGoogleWorkspaceAccessToken(alice)).toEqual({
+    expect(
+      await service.readGoogleWorkspaceGrantVersion(alice, "gmail.read")
+    ).toBe(row?.version);
+    expect(
+      await service.getGoogleWorkspaceAccessToken(alice, "gmail.read")
+    ).toEqual({
       token: "fixture-access-token",
       version: row?.version,
     });
-    await expect(service.getGoogleWorkspaceAccessToken(bob)).rejects.toThrow(
-      "/connections/google"
-    );
+    await expect(
+      service.getGoogleWorkspaceAccessToken(bob, "gmail.read")
+    ).rejects.toThrow("/connections/google");
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -313,8 +421,8 @@ describe("direct Google Workspace authorization", () => {
       .set({ accessExpiresAt: new Date(Date.now() - 1000) });
     vi.mocked(globalThis.fetch).mockClear();
     const tokens = await Promise.all([
-      service.getGoogleWorkspaceAccessToken(alice),
-      service.getGoogleWorkspaceAccessToken(alice),
+      service.getGoogleWorkspaceAccessToken(alice, "gmail.read"),
+      service.getGoogleWorkspaceAccessToken(alice, "gmail.read"),
     ]);
     expect(tokens[0]).toEqual(tokens[1]);
     expect(globalThis.fetch).toHaveBeenCalledOnce();
@@ -334,12 +442,12 @@ describe("direct Google Workspace authorization", () => {
       .mockResolvedValueOnce(
         Response.json({ error: "invalid_grant" }, { status: 400 })
       );
-    await expect(service.getGoogleWorkspaceAccessToken(alice)).rejects.toThrow(
-      "/connections/google"
-    );
-    await expect(service.getGoogleWorkspaceAccessToken(alice)).rejects.toThrow(
-      "/connections/google"
-    );
+    await expect(
+      service.getGoogleWorkspaceAccessToken(alice, "gmail.read")
+    ).rejects.toThrow("/connections/google");
+    await expect(
+      service.getGoogleWorkspaceAccessToken(alice, "gmail.read")
+    ).rejects.toThrow("/connections/google");
     expect(globalThis.fetch).toHaveBeenCalledOnce();
     expect(await service.readGoogleWorkspaceConnection(alice)).toMatchObject({
       state: "disconnected",
@@ -348,7 +456,10 @@ describe("direct Google Workspace authorization", () => {
 
   it("removes local access before revoke, keeps an unknown-outcome fence and refuses reconnect", async () => {
     await connected();
-    const before = await service.getGoogleWorkspaceAccessToken(alice);
+    const before = await service.getGoogleWorkspaceAccessToken(
+      alice,
+      "gmail.read"
+    );
     vi.mocked(globalThis.fetch)
       .mockClear()
       .mockImplementationOnce(async () => {
@@ -359,7 +470,7 @@ describe("direct Google Workspace authorization", () => {
       });
     await service.disconnectGoogleWorkspace(alice);
     await expect(
-      service.assertGoogleWorkspaceVersion(alice, before.version)
+      service.assertGoogleWorkspaceVersion(alice, before.version, "gmail.read")
     ).rejects.toThrow("/connections/google");
     await expect(
       service.beginGoogleWorkspaceOAuth(alice, sessionId)

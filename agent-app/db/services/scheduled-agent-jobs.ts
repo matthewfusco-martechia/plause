@@ -1,8 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { isDeepStrictEqual } from "node:util";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { Interaction } from "eve/events";
 import { z } from "zod";
 import type { AccessScope } from "@shared/identity/access-scope";
+import { accessScopeForUser } from "@shared/identity/access-scope";
+import { isPhoneEnrollmentAllowed } from "@shared/identity/enrollment";
 import {
   computeNextRun,
   computeLatestRun,
@@ -13,7 +27,11 @@ import {
   scheduledRunOutcomeSchema,
   type ScheduledRunOutcome,
 } from "@shared/schedules/outcome";
-import { db, scheduledAgentJobs, scheduledAgentRuns } from "@db";
+import { db, scheduledAgentJobs, scheduledAgentRuns, user } from "@db";
+import {
+  scheduleNotificationPolicySchema,
+  nextScheduledNotificationTime,
+} from "@shared/schedules/notifications";
 
 // eve exports the Interaction type without a runtime guard; check the fields
 // the answer route and report prompt read before trusting a stored request.
@@ -42,7 +60,11 @@ const exhaustedRunOutcome = {
 } satisfies ScheduledRunOutcome;
 
 export interface CreateScheduledAgentJob {
-  readonly conversationChannel: "eve" | "linq";
+  readonly id?: string;
+  readonly notificationPolicy?: z.infer<
+    typeof scheduleNotificationPolicySchema
+  >;
+  readonly conversationChannel: "eve" | "linq" | "inkbox";
   readonly conversationId: string;
   readonly missedRunPolicy: "catch_up" | "run_latest";
   readonly prompt: string;
@@ -51,13 +73,26 @@ export interface CreateScheduledAgentJob {
 }
 
 export interface UpdateScheduledAgentJob {
+  readonly notificationPolicy?: z.infer<
+    typeof scheduleNotificationPolicySchema
+  >;
   readonly prompt?: string;
   readonly status?: "active" | "deleted" | "paused";
   readonly timing?: ScheduleTiming;
 }
 
 function parseJob<T extends typeof scheduledAgentJobs.$inferSelect>(job: T) {
-  return { ...job, timing: scheduleTimingSchema.parse(job.timing) };
+  const policy = scheduleNotificationPolicySchema.safeParse(
+    job.notificationPolicy
+  );
+  return {
+    ...job,
+    timing: scheduleTimingSchema.parse(job.timing),
+    notificationPolicy:
+      policy.success && policy.data.consentedBy === job.createdByUserId
+        ? policy.data
+        : null,
+  };
 }
 
 function parseRun<T extends typeof scheduledAgentRuns.$inferSelect>(run: T) {
@@ -75,16 +110,25 @@ export async function createScheduledAgentJob(
   input: CreateScheduledAgentJob,
   now = new Date()
 ) {
+  if (
+    input.notificationPolicy &&
+    input.notificationPolicy.consentedBy !== scope.userId
+  )
+    throw new Error("Schedule notification consent must belong to its owner.");
   const nextRunAt = computeNextRun(input.timing, now);
   if (!nextRunAt) throw new Error("That schedule has no future occurrence.");
   const [job] = await db
     .insert(scheduledAgentJobs)
     .values({
+      id: input.id,
       createdAt: now,
       createdByUserId: scope.userId,
       conversationChannel: input.conversationChannel,
       conversationId: input.conversationId,
       missedRunPolicy: input.missedRunPolicy,
+      notificationPolicy: input.notificationPolicy
+        ? scheduleNotificationPolicySchema.parse(input.notificationPolicy)
+        : null,
       nextRunAt,
       prompt: input.prompt,
       replyAnchorMessageId: input.replyAnchorMessageId,
@@ -93,7 +137,48 @@ export async function createScheduledAgentJob(
       updatedAt: now,
       workspaceId: scope.workspaceId,
     })
+    .onConflictDoNothing({ target: scheduledAgentJobs.id })
     .returning();
+  if (!job && input.id) {
+    const existing = await db.query.scheduledAgentJobs.findFirst({
+      where: and(
+        eq(scheduledAgentJobs.id, input.id),
+        eq(scheduledAgentJobs.workspaceId, scope.workspaceId),
+        eq(scheduledAgentJobs.createdByUserId, scope.userId)
+      ),
+    });
+    const policy = existing ? parseJob(existing).notificationPolicy : null;
+    if (
+      !existing ||
+      existing.conversationId !== input.conversationId ||
+      existing.conversationChannel !== input.conversationChannel ||
+      existing.prompt !== input.prompt ||
+      !isDeepStrictEqual(existing.timing, input.timing) ||
+      existing.missedRunPolicy !== input.missedRunPolicy ||
+      existing.status === "deleted"
+    )
+      throw new Error(
+        "The scheduled request identity conflicts with existing work."
+      );
+    if (
+      !isDeepStrictEqual(
+        policy
+          ? [policy.timezone, policy.quietHours, policy.consentedBy]
+          : null,
+        input.notificationPolicy
+          ? [
+              input.notificationPolicy.timezone,
+              input.notificationPolicy.quietHours,
+              input.notificationPolicy.consentedBy,
+            ]
+          : null
+      )
+    )
+      throw new Error(
+        "The scheduled request identity conflicts with existing delivery consent."
+      );
+    return parseJob(existing);
+  }
   if (!job) throw new Error("The schedule could not be created.");
   return parseJob(job);
 }
@@ -143,6 +228,11 @@ export async function updateScheduledAgentJob(
   patch: UpdateScheduledAgentJob,
   now = new Date()
 ) {
+  if (
+    patch.notificationPolicy &&
+    patch.notificationPolicy.consentedBy !== scope.userId
+  )
+    throw new Error("Schedule notification consent must belong to its owner.");
   const current = await db.query.scheduledAgentJobs.findFirst({
     where: and(
       eq(scheduledAgentJobs.id, id),
@@ -180,7 +270,12 @@ export async function updateScheduledAgentJob(
       timing,
       updatedAt: now,
     })
-    .where(eq(scheduledAgentJobs.id, current.id))
+    .where(
+      and(
+        eq(scheduledAgentJobs.id, current.id),
+        eq(scheduledAgentJobs.revision, current.revision)
+      )
+    )
     .returning();
   return job ? parseJob(job) : undefined;
 }
@@ -196,6 +291,7 @@ export async function materializeDueScheduledAgentRuns(options: {
       .where(
         and(
           eq(scheduledAgentJobs.status, "active"),
+          sql`${scheduledAgentJobs.notificationPolicy}->>'consentedBy' = ${scheduledAgentJobs.createdByUserId}`,
           lte(scheduledAgentJobs.nextRunAt, options.now)
         )
       )
@@ -216,6 +312,7 @@ export async function materializeDueScheduledAgentRuns(options: {
           .values({
             createdAt: options.now,
             jobId: job.id,
+            jobRevision: job.revision,
             scheduledFor,
             updatedAt: options.now,
           })
@@ -254,6 +351,9 @@ export async function claimReadyScheduledAgentRuns(options: {
       )
       .where(
         and(
+          inArray(scheduledAgentJobs.status, ["active", "completed"]),
+          eq(scheduledAgentRuns.jobRevision, scheduledAgentJobs.revision),
+          sql`${scheduledAgentJobs.notificationPolicy}->>'consentedBy' = ${scheduledAgentJobs.createdByUserId}`,
           or(
             eq(scheduledAgentRuns.status, "queued"),
             and(
@@ -619,12 +719,38 @@ export async function releaseScheduledAgentRun(
 }
 
 export async function claimScheduledReport(runId: string, now = new Date()) {
+  const candidate = await db.query.scheduledAgentRuns.findFirst({
+    where: eq(scheduledAgentRuns.id, runId),
+    with: { job: true },
+  });
+  const policy = candidate ? parseJob(candidate.job).notificationPolicy : null;
+  if (
+    !candidate ||
+    !policy ||
+    candidate.jobRevision !== candidate.job.revision ||
+    !["active", "completed"].includes(candidate.job.status)
+  )
+    return undefined;
+  const allowedAt = nextScheduledNotificationTime(policy, now);
+  if (allowedAt > now) {
+    await db
+      .update(scheduledAgentRuns)
+      .set({ reportNotBefore: allowedAt })
+      .where(
+        and(
+          eq(scheduledAgentRuns.id, runId),
+          eq(scheduledAgentRuns.reportStatus, "pending")
+        )
+      );
+    return undefined;
+  }
   const reportLeaseToken = randomUUID();
   const [claimed] = await db
     .update(scheduledAgentRuns)
     .set({
       reportLeaseExpiresAt: new Date(now.getTime() + 5 * 60_000),
       reportLeaseToken,
+      reportNotBefore: null,
       reportStatus: "queued",
       updatedAt: now,
     })
@@ -650,6 +776,65 @@ export async function claimScheduledReport(runId: string, now = new Date()) {
   return { job: parseJob(job), run: parseRun(run) };
 }
 
+/** Final dispatch authority; database time is evaluated after any provider/media awaits. */
+export async function isScheduledReportDeliveryActive(
+  scope: AccessScope,
+  runId: string,
+  leaseToken: string,
+  sequence: number
+) {
+  if (
+    !scope.userId.startsWith("better-auth:") ||
+    accessScopeForUser(scope.userId).workspaceId !== scope.workspaceId ||
+    !Number.isSafeInteger(sequence) ||
+    sequence < 1
+  )
+    return false;
+  const [current] = await db
+    .select({
+      phoneNumber: user.phoneNumber,
+      notificationPolicy: scheduledAgentJobs.notificationPolicy,
+      databaseNow: sql<Date>`clock_timestamp()`,
+    })
+    .from(scheduledAgentRuns)
+    .innerJoin(
+      scheduledAgentJobs,
+      eq(scheduledAgentRuns.jobId, scheduledAgentJobs.id)
+    )
+    .innerJoin(user, eq(user.id, scope.userId.slice("better-auth:".length)))
+    .where(
+      and(
+        eq(scheduledAgentRuns.id, runId),
+        eq(scheduledAgentRuns.reportLeaseToken, leaseToken),
+        eq(scheduledAgentRuns.reportSequence, sequence),
+        eq(scheduledAgentRuns.reportStatus, "queued"),
+        gt(scheduledAgentRuns.reportLeaseExpiresAt, sql`clock_timestamp()`),
+        inArray(scheduledAgentRuns.status, [
+          "completed",
+          "dead_letter",
+          "waiting_for_input",
+        ]),
+        eq(scheduledAgentJobs.workspaceId, scope.workspaceId),
+        eq(scheduledAgentJobs.createdByUserId, scope.userId),
+        eq(scheduledAgentRuns.jobRevision, scheduledAgentJobs.revision),
+        // One-time jobs become completed when materialized, before their result is delivered.
+        inArray(scheduledAgentJobs.status, ["active", "completed"]),
+        eq(user.phoneNumberVerified, true)
+      )
+    );
+  if (!current?.phoneNumber || !isPhoneEnrollmentAllowed(current.phoneNumber))
+    return false;
+  const policy = scheduleNotificationPolicySchema.safeParse(
+    current.notificationPolicy
+  );
+  const now = new Date(current.databaseNow);
+  return (
+    policy.success &&
+    policy.data.consentedBy === scope.userId &&
+    nextScheduledNotificationTime(policy.data, now) <= now
+  );
+}
+
 export async function listRecoverableScheduledReports(
   now = new Date(),
   limit = 25
@@ -667,6 +852,13 @@ export async function listRecoverableScheduledReports(
       )
       .where(
         and(
+          inArray(scheduledAgentJobs.status, ["active", "completed"]),
+          eq(scheduledAgentRuns.jobRevision, scheduledAgentJobs.revision),
+          sql`${scheduledAgentJobs.notificationPolicy}->>'consentedBy' = ${scheduledAgentJobs.createdByUserId}`,
+          or(
+            isNull(scheduledAgentRuns.reportNotBefore),
+            lte(scheduledAgentRuns.reportNotBefore, now)
+          ),
           inArray(scheduledAgentRuns.status, [
             "completed",
             "dead_letter",
@@ -714,6 +906,73 @@ export async function listRecoverableScheduledReports(
   });
 }
 
+// The gateway stores only this deadline. Prompts, identity and results stay in PostgreSQL.
+export async function expireScheduledAgentRuns(now = new Date()) {
+  return db
+    .update(scheduledAgentRuns)
+    .set({
+      status: "dead_letter",
+      leaseToken: null,
+      leaseExpiresAt: null,
+      reportStatus: "pending",
+      reportSequence: sql`${scheduledAgentRuns.reportSequence} + 1`,
+      outcome: {
+        kind: "blocked",
+        summary:
+          "The scheduled task exceeded its allowed runtime. It was not automatically retried.",
+        userActionNeeded:
+          "Review the task outcome before starting distinct new work.",
+      } satisfies ScheduledRunOutcome,
+      lastError: "Scheduled worker runtime expired.",
+      completedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(scheduledAgentRuns.status, "running"),
+        sql`${scheduledAgentRuns.workerSessionId} IS NOT NULL`,
+        lte(scheduledAgentRuns.leaseExpiresAt, now)
+      )
+    )
+    .returning({ id: scheduledAgentRuns.id });
+}
+
+export async function readNextScheduledWake(now = new Date()) {
+  const [job] = await db
+    .select({ at: sql<Date | null>`min(${scheduledAgentJobs.nextRunAt})` })
+    .from(scheduledAgentJobs)
+    .where(
+      and(
+        eq(scheduledAgentJobs.status, "active"),
+        sql`${scheduledAgentJobs.notificationPolicy}->>'consentedBy' = ${scheduledAgentJobs.createdByUserId}`
+      )
+    );
+  const [run] = await db
+    .select({
+      at: sql<Date | null>`least(
+    min(case when ${scheduledAgentRuns.status} = 'queued' then coalesce(${scheduledAgentRuns.retryAt}, ${now}) when ${scheduledAgentRuns.status} = 'running' then least(${scheduledAgentRuns.leaseExpiresAt}, ${new Date(now.getTime() + 60_000)}) end),
+    min(case when ${scheduledAgentRuns.reportStatus} = 'pending' then coalesce(${scheduledAgentRuns.reportNotBefore}, ${now}) when ${scheduledAgentRuns.reportStatus} = 'queued' then ${scheduledAgentRuns.reportLeaseExpiresAt} end))`,
+    })
+    .from(scheduledAgentRuns)
+    .innerJoin(
+      scheduledAgentJobs,
+      eq(scheduledAgentRuns.jobId, scheduledAgentJobs.id)
+    )
+    .where(
+      and(
+        inArray(scheduledAgentJobs.status, ["active", "completed"]),
+        eq(scheduledAgentRuns.jobRevision, scheduledAgentJobs.revision),
+        sql`${scheduledAgentJobs.notificationPolicy}->>'consentedBy' = ${scheduledAgentJobs.createdByUserId}`
+      )
+    );
+  const times = [job?.at, run?.at]
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => new Date(value).getTime());
+  return times.length
+    ? new Date(Math.max(now.getTime() + 1000, Math.min(...times)))
+    : null;
+}
+
 export async function releaseScheduledReport(
   runId: string,
   leaseToken: string,
@@ -731,7 +990,32 @@ export async function releaseScheduledReport(
     .where(
       and(
         eq(scheduledAgentRuns.id, runId),
-        eq(scheduledAgentRuns.reportLeaseToken, leaseToken)
+        eq(scheduledAgentRuns.reportLeaseToken, leaseToken),
+        eq(scheduledAgentRuns.reportStatus, "queued")
+      )
+    )
+    .returning({ id: scheduledAgentRuns.id });
+  return run !== undefined;
+}
+
+/** An uncertain provider dispatch is never eligible for automatic report recovery. */
+export async function holdScheduledReport(
+  runId: string,
+  leaseToken: string,
+  errorMessage: string
+) {
+  const [run] = await db
+    .update(scheduledAgentRuns)
+    .set({
+      reportStatus: "unknown",
+      lastError: errorMessage.slice(0, 2_000),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(scheduledAgentRuns.id, runId),
+        eq(scheduledAgentRuns.reportLeaseToken, leaseToken),
+        eq(scheduledAgentRuns.reportStatus, "queued")
       )
     )
     .returning({ id: scheduledAgentRuns.id });

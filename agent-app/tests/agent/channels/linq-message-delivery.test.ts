@@ -88,6 +88,7 @@ vi.mock("@shared/environment", async (importOriginal) => {
     ...original,
     env: {
       ...original.env,
+      MESSAGING_PROVIDER: "linq",
       get LINQ_API_KEY() {
         return linqChannelCapture.apiKey;
       },
@@ -230,7 +231,7 @@ describe("Linq message delivery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     linqChannelCapture.apiKey = "linq-test-api-key";
-    linqChannelCapture.assertUser.mockReset().mockResolvedValue(undefined);
+    linqChannelCapture.assertUser.mockReset().mockResolvedValue("+15550100011");
     linqChannelCapture.sendNativeMessage
       .mockReset()
       .mockImplementation(async (_chatId, body) => {

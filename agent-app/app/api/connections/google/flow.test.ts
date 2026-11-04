@@ -47,6 +47,7 @@ beforeEach(() => {
     state: "disconnected",
     accountLabel: null,
     revocationPending: false,
+    capabilities: [],
   });
 });
 
@@ -72,6 +73,49 @@ function callback(
 }
 
 describe("Google permission review and browser flow", () => {
+  it.each(["access=admin", "access=read&access=write"])(
+    "rejects an invalid or ambiguous access review %s",
+    async (access) => {
+      const response = await POST(
+        start("https://example.com", `reviewedPermissions=yes&${access}`)
+      );
+      expect(response.status).toBe(400);
+      expect(mocks.begin).not.toHaveBeenCalled();
+    }
+  );
+
+  it("requires an explicit write selection and shows only granted connected permissions", async () => {
+    await POST(
+      start("https://example.com", "reviewedPermissions=yes&access=write")
+    );
+    expect(mocks.begin).toHaveBeenCalledWith(
+      accessScopeForUser("better-auth:alice"),
+      "phone-session",
+      "write"
+    );
+    mocks.read.mockResolvedValueOnce({
+      state: "connected",
+      accountLabel: "Fictional account",
+      revocationPending: false,
+      capabilities: ["calendar.read"],
+    });
+    const html = renderToStaticMarkup(
+      await Page({
+        params: Promise.resolve({}),
+        searchParams: Promise.resolve({}),
+      })
+    );
+    const available = html
+      .split('id="google-connected-permissions"')[1]
+      ?.split("</section>")[0];
+    expect(available).toContain("Read Calendar events");
+    expect(available).not.toContain("Read Gmail");
+    expect(/<input\b[^>]*value="read"[^>]*>/u.exec(html)?.[0]).toContain(
+      'checked=""'
+    );
+    expect(html).toContain("Review permissions at Google");
+  });
+
   it("requires same-origin, a signed-in phone session and explicit permission review before OAuth starts", async () => {
     expect((await POST(start("https://attacker.invalid"))).status).toBe(403);
     expect(
@@ -106,7 +150,8 @@ describe("Google permission review and browser flow", () => {
     expect(response.status).toBe(303);
     expect(mocks.begin).toHaveBeenCalledExactlyOnceWith(
       accessScopeForUser("better-auth:alice"),
-      "phone-session"
+      "phone-session",
+      "read"
     );
     const cookie = response.headers.get("set-cookie");
     expect(cookie).toContain("HttpOnly");
@@ -187,6 +232,7 @@ describe("Google permission review and browser flow", () => {
       state: "disconnected",
       accountLabel: null,
       revocationPending: true,
+      capabilities: [],
     });
     const html = renderToStaticMarkup(
       await Page({

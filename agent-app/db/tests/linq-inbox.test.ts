@@ -35,6 +35,7 @@ vi.mock("@shared/environment", async (original) => {
 });
 
 const client = new PGlite();
+await client.waitReady;
 const database = drizzle(client, { schema });
 beforeAll(initializeDatabase);
 beforeEach(async () => {

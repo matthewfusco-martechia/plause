@@ -46,6 +46,12 @@ export default defineEval({
         scope,
         {
           ...conversation,
+          notificationPolicy: {
+            timezone: "UTC",
+            quietHours: null,
+            consentedBy: scope.userId,
+            consentedAt: new Date().toISOString(),
+          },
           missedRunPolicy: "run_latest",
           prompt: `Return exactly this text as your concise final handoff without calling tools: ${testCase.result}`,
           timing: { at: dueAt.toISOString(), kind: "once" },

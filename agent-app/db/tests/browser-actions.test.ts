@@ -19,6 +19,7 @@ import {
 } from "@db/services/browser-actions";
 
 const client = new PGlite();
+await client.waitReady;
 beforeAll(async () => {
   await client.exec(
     await readFile(

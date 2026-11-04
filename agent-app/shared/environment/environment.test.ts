@@ -17,6 +17,14 @@ describe("environment", () => {
     }
     vi.stubEnv("LINQ_API_KEY", "");
     vi.stubEnv("LINQ_PHONE_NUMBER", "");
+    vi.stubEnv("MESSAGING_PROVIDER", undefined);
+    for (const key of [
+      "INKBOX_API_KEY",
+      "INKBOX_IDENTITY_ID",
+      "INKBOX_AGENT_HANDLE",
+      "INKBOX_WEBHOOK_SIGNING_KEY",
+    ])
+      vi.stubEnv(key, "");
   });
 
   afterEach(() => {
@@ -38,7 +46,93 @@ describe("environment", () => {
     expect(env.WEB_RESEARCH_ENABLED).toBe("false");
     expect(env.LINQ_API_KEY).toBeUndefined();
     expect(env.LINQ_PHONE_NUMBER).toBeUndefined();
+    expect(env.MESSAGING_PROVIDER).toBe("disabled");
+    expect(env.PLAUSE_WORKFLOW_BACKEND).toBe("local");
+    expect(env.INKBOX_API_KEY).toBeUndefined();
     expect(env.MODEL_GLOBAL_MONTHLY_BUDGET_MICRO_USD).toBe(30_000);
+  });
+
+  it("accepts explicitly selected PostgreSQL workflow storage with bounded worker settings", async () => {
+    vi.stubEnv("PLAUSE_WORKFLOW_BACKEND", "postgres");
+    vi.stubEnv(
+      "WORKFLOW_POSTGRES_URL",
+      "postgresql://fixture:fixture@example.com/workflow"
+    );
+    vi.stubEnv("WORKFLOW_POSTGRES_WORKER_CONCURRENCY", "4");
+    vi.stubEnv("WORKFLOW_POSTGRES_MAX_POOL_SIZE", "10");
+    vi.stubEnv("WORKFLOW_POSTGRES_POLL_INTERVAL_MS", "2000");
+    const { env } = await import("@shared/environment");
+    expect(env.PLAUSE_WORKFLOW_BACKEND).toBe("postgres");
+    expect(env.WORKFLOW_POSTGRES_WORKER_CONCURRENCY).toBe(4);
+    expect(env.WORKFLOW_POSTGRES_MAX_POOL_SIZE).toBe(10);
+    expect(env.WORKFLOW_POSTGRES_POLL_INTERVAL_MS).toBe(2000);
+  });
+
+  it.each([
+    ["PLAUSE_WORKFLOW_BACKEND", "d1"],
+    ["WORKFLOW_POSTGRES_URL", "https://example.com"],
+    ["WORKFLOW_POSTGRES_WORKER_CONCURRENCY", "0"],
+    ["WORKFLOW_POSTGRES_WORKER_CONCURRENCY", "51"],
+    ["WORKFLOW_POSTGRES_MAX_POOL_SIZE", "2"],
+    ["WORKFLOW_POSTGRES_POLL_INTERVAL_MS", "0"],
+  ])("rejects malformed workflow setting %s", async (name, value) => {
+    vi.stubEnv(name, value);
+    await expect(import("@shared/environment")).rejects.toThrow(
+      "Invalid environment variables"
+    );
+  });
+
+  it("supports explicitly selected Inkbox with canonical owned-identity configuration", async () => {
+    vi.stubEnv("MESSAGING_PROVIDER", "inkbox");
+    vi.stubEnv("INKBOX_API_KEY", "fictional-inkbox-key");
+    vi.stubEnv("INKBOX_IDENTITY_ID", "da3f6e14-5915-4cf8-b100-130846fa3f5e");
+    vi.stubEnv("INKBOX_AGENT_HANDLE", "plause_test");
+    vi.stubEnv(
+      "INKBOX_WEBHOOK_SIGNING_KEY",
+      "whsec_fictional-identity-signing-key-0123456789"
+    );
+    const { env } = await import("@shared/environment");
+    expect(env.MESSAGING_PROVIDER).toBe("inkbox");
+    expect(env.INKBOX_IDENTITY_ID).toBe("da3f6e14-5915-4cf8-b100-130846fa3f5e");
+    expect(env.INKBOX_AGENT_HANDLE).toBe("plause_test");
+  });
+
+  it.each(["INKBOX", "auto", "inkbox "])(
+    "rejects unsupported provider selection %s",
+    async (value) => {
+      vi.stubEnv("MESSAGING_PROVIDER", value);
+      await expect(import("@shared/environment")).rejects.toThrow(
+        "Invalid environment variables"
+      );
+    }
+  );
+
+  it.each([
+    ["INKBOX_IDENTITY_ID", "not-a-uuid"],
+    ["INKBOX_AGENT_HANDLE", "@plause"],
+    ["INKBOX_AGENT_HANDLE", "Plause"],
+    ["INKBOX_AGENT_HANDLE", "plause/path"],
+    ["INKBOX_WEBHOOK_SIGNING_KEY", "too-short"],
+    ["INKBOX_WEBHOOK_SIGNING_KEY", "whsec_" + "a".repeat(31)],
+    ["INKBOX_WEBHOOK_SIGNING_KEY", "a".repeat(513)],
+    ["INKBOX_WEBHOOK_SIGNING_KEY", "a".repeat(32) + "\n"],
+  ])(
+    "rejects malformed %s without falling back to Linq",
+    async (key, value) => {
+      vi.stubEnv("MESSAGING_PROVIDER", "inkbox");
+      vi.stubEnv(key, value);
+      await expect(import("@shared/environment")).rejects.toThrow(
+        "Invalid environment variables"
+      );
+    }
+  );
+
+  it("allows selected Inkbox to remain unconfigured with blank credentials", async () => {
+    vi.stubEnv("MESSAGING_PROVIDER", "inkbox");
+    const { env } = await import("@shared/environment");
+    expect(env.MESSAGING_PROVIDER).toBe("inkbox");
+    expect(env.INKBOX_IDENTITY_ID).toBeUndefined();
+    expect(env.INKBOX_API_KEY).toBeUndefined();
   });
 
   it("accepts only an explicit Google Workspace write capability switch", async () => {

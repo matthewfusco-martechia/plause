@@ -1,0 +1,36 @@
+{
+	admin off
+	auto_https off
+	log {
+		output discard
+	}
+}
+http://:8080 {
+	route {
+		@workflow path /.well-known/workflow/*
+		handle @workflow {
+			respond 404
+		}
+		@ready {
+			path /_plause/runtime-ready
+			header Authorization "Bearer {$PLAUSE_EDGE_INTERNAL_TOKEN}"
+		}
+		handle @ready {
+			rewrite * /eve/v1/health
+			reverse_proxy 127.0.0.1:4274
+		}
+		@service path /webhooks/linq /internal/linq/dispatch /webhooks/inkbox /internal/inkbox/dispatch /internal/scheduled-run/report /internal/scheduled-run/respond /internal/schedules/tick
+		handle @service {
+			# Edge admission complements app signatures and DB replay fences.
+			reverse_proxy 127.0.0.1:4274
+		}
+		handle {
+			basic_auth {
+				plause {$PLAUSE_ACCESS_HASH}
+			}
+			reverse_proxy 127.0.0.1:3000 {
+				header_up -Authorization
+			}
+		}
+	}
+}

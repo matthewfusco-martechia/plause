@@ -10,7 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCalendarEvent } from "@agent/lib/google-workspace/calendar";
 import { withGoogleAuth } from "@agent/lib/google-workspace/client";
 import { searchGoogleContacts } from "@agent/lib/google-workspace/contacts";
-import { sendGmail } from "@agent/lib/google-workspace/gmail";
+import {
+  readGmailDraftBySubject,
+  sendGmail,
+} from "@agent/lib/google-workspace/gmail";
 import { accessScopeForUser } from "@shared/identity/access-scope";
 
 vi.mock("@db/services/auth/phone-user", () => ({
@@ -73,15 +76,107 @@ const setCredentialsMock = vi.spyOn(
   "setCredentials"
 );
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  gmailMock.mockReset();
+  vi.clearAllMocks();
+});
 
 describe("generated Google Workspace clients", () => {
+  it.each([false, true])(
+    "reads the exact draft, including its thread only when requested (%s)",
+    async (includeThread) => {
+      const ctx = toolContext();
+      const client = GmailApi.gmail({ version: "v1" });
+      const list = vi
+        .fn<
+          () => Promise<{ data: GmailApi.gmail_v1.Schema$ListMessagesResponse }>
+        >()
+        .mockResolvedValue({
+          data: { messages: [{ id: "draft" }, { id: "similar" }] },
+        });
+      const selected = {
+        id: "draft",
+        labelIds: ["DRAFT"],
+        threadId: "thread",
+        payload: { headers: [{ name: "Subject", value: "Meeting plan" }] },
+      };
+      const full = {
+        ...selected,
+        payload: {
+          ...selected.payload,
+          mimeType: "text/plain",
+          body: { data: Buffer.from("Fictional agenda").toString("base64url") },
+        },
+      };
+      const get = vi
+        .fn<() => Promise<{ data: GmailApi.gmail_v1.Schema$Message }>>()
+        .mockResolvedValueOnce({ data: selected })
+        .mockResolvedValueOnce({
+          data: {
+            id: "similar",
+            labelIds: ["DRAFT"],
+            payload: {
+              headers: [{ name: "Subject", value: "Old meeting plan" }],
+            },
+          },
+        })
+        .mockResolvedValueOnce({ data: full });
+      const getThread = vi
+        .fn<() => Promise<{ data: GmailApi.gmail_v1.Schema$Thread }>>()
+        .mockResolvedValue({ data: { id: "thread", messages: [full] } });
+      Object.defineProperty(client.users.threads, "get", { value: getThread });
+      Object.defineProperties(client.users.messages, {
+        list: { value: list },
+        get: { value: get },
+      });
+      googleClients({ gmail: client });
+
+      expect(
+        await readGmailDraftBySubject(ctx, "Meeting plan", includeThread)
+      ).toMatchObject({
+        status: "found",
+        id: "draft",
+        ...(includeThread
+          ? {
+              thread: {
+                id: "thread",
+                messages: [{ body: "Fictional agenda" }],
+              },
+            }
+          : { threadId: "thread", body: "Fictional agenda" }),
+        untrustedContent: true,
+      });
+      expect(list).toHaveBeenCalledExactlyOnceWith(
+        {
+          labelIds: ["DRAFT"],
+          maxResults: 10,
+          q: 'subject:"Meeting plan"',
+          userId: "me",
+        },
+        { signal: ctx.abortSignal }
+      );
+      expect(get).toHaveBeenCalledTimes(includeThread ? 2 : 3);
+      const options = { signal: ctx.abortSignal };
+      expect(getThread.mock.calls).toEqual(
+        includeThread
+          ? [[{ format: "full", id: "thread", userId: "me" }, options]]
+          : []
+      );
+      expect(get.mock.calls.slice(2)).toEqual(
+        includeThread
+          ? []
+          : [[{ format: "full", id: "draft", userId: "me" }, options]]
+      );
+      expect(connection.token).toHaveBeenCalledOnce();
+    }
+  );
+
   it("uses the owned direct token and invalidates only its version on 401", async () => {
     const ctx = toolContext();
     const error = new GoogleApiError(401);
 
     await expect(
-      withGoogleAuth(ctx, () => Promise.reject(error))
+      withGoogleAuth(ctx, () => Promise.reject(error), "gmail.read")
     ).rejects.toThrow("/connections/google");
 
     expect(ctx.getToken).not.toHaveBeenCalled();

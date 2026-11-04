@@ -1,21 +1,33 @@
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const databases: PGlite[] = [];
+const unusedDatabases: PGlite[] = [];
 let preparedDatabase: PGlite | undefined;
-
-beforeEach(async () => {
+for (let fixtureIndex = 0; fixtureIndex < 4; fixtureIndex += 1) {
   const database = new PGlite();
-  databases.push(database);
-  // Keep cold WebAssembly/Postgres startup outside each migration assertion deadline.
+  // oxlint-disable-next-line eslint/no-await-in-loop -- Initialize the four isolated fixtures serially outside timed hooks to avoid cold-start contention.
   await database.waitReady;
+  unusedDatabases.push(database);
+}
+
+beforeEach(() => {
+  const database = unusedDatabases.shift();
+  if (!database) throw new Error("No fresh migration fixture available.");
+  databases.push(database);
   preparedDatabase = database;
 });
 
 afterEach(async () => {
   preparedDatabase = undefined;
   await Promise.all(databases.splice(0).map((database) => database.close()));
+});
+
+afterAll(async () => {
+  await Promise.all(
+    unusedDatabases.splice(0).map((database) => database.close())
+  );
 });
 
 describe("database migrations", () => {

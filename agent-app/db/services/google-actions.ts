@@ -7,6 +7,10 @@ import {
   googleActionDispatches,
 } from "@db/schema/google-actions";
 import { googleWorkspaceConnections } from "@db/schema/google-workspace";
+import {
+  googleWorkspaceGrantedCapabilities,
+  hasGoogleWorkspaceGrant,
+} from "@shared/google-workspace/connection";
 import { assertEnrolledWorkspaceUser } from "./auth/phone-user";
 import {
   lockRootActionClaims,
@@ -136,7 +140,11 @@ export async function requestGoogleActionApproval(
     if (
       connection?.status !== "connected" ||
       connection.revocationPending ||
-      connection.version !== grantVersion
+      connection.version !== grantVersion ||
+      !hasGoogleWorkspaceGrant(connection.grantedScopes) ||
+      !googleWorkspaceGrantedCapabilities(connection.grantedScopes).includes(
+        googleActionCapability(binding.toolName)
+      )
     )
       throw new GoogleActionApprovalError();
     if (await hasUnresolvedRootAction(tx, binding))
@@ -185,7 +193,11 @@ export async function respondGoogleActionApproval(
     if (
       connection?.status !== "connected" ||
       connection.revocationPending ||
-      connection.version !== grantVersion
+      connection.version !== grantVersion ||
+      !hasGoogleWorkspaceGrant(connection.grantedScopes) ||
+      !googleWorkspaceGrantedCapabilities(connection.grantedScopes).includes(
+        googleActionCapability(binding.toolName)
+      )
     )
       throw new GoogleActionApprovalError();
     const [approval] = await tx
@@ -232,6 +244,7 @@ export async function readGoogleActionGrant(value: GoogleActionBinding) {
     .where(matchingApproval(binding, approval.grantVersion))
     .limit(1);
   if (!matched) throw new GoogleActionApprovalError();
+  await assertCurrentGrant(binding, approval.grantVersion);
   return approval.grantVersion;
 }
 
@@ -253,7 +266,11 @@ export async function executeGoogleAction<T>(
     if (
       connection?.status !== "connected" ||
       connection.revocationPending ||
-      connection.version !== grantVersion
+      connection.version !== grantVersion ||
+      !hasGoogleWorkspaceGrant(connection.grantedScopes) ||
+      !googleWorkspaceGrantedCapabilities(connection.grantedScopes).includes(
+        googleActionCapability(binding.toolName)
+      )
     )
       throw new GoogleActionApprovalError();
     const [approval] = await tx
@@ -353,7 +370,11 @@ export async function executeGoogleAction<T>(
       const current =
         connection?.status === "connected" &&
         !connection.revocationPending &&
-        connection.version === grantVersion;
+        connection.version === grantVersion &&
+        hasGoogleWorkspaceGrant(connection.grantedScopes) &&
+        googleWorkspaceGrantedCapabilities(connection.grantedScopes).includes(
+          googleActionCapability(binding.toolName)
+        );
       await tx
         .update(googleActionDispatches)
         .set({
@@ -390,7 +411,10 @@ async function assertCurrentGrant(
   version: number
 ) {
   const [row] = await db
-    .select({ version: googleWorkspaceConnections.version })
+    .select({
+      version: googleWorkspaceConnections.version,
+      grantedScopes: googleWorkspaceConnections.grantedScopes,
+    })
     .from(googleWorkspaceConnections)
     .where(
       and(
@@ -401,5 +425,20 @@ async function assertCurrentGrant(
       )
     )
     .limit(1);
-  if (!row) throw new GoogleActionApprovalError();
+  if (
+    !row ||
+    !hasGoogleWorkspaceGrant(row.grantedScopes) ||
+    !googleWorkspaceGrantedCapabilities(row.grantedScopes).includes(
+      googleActionCapability(binding.toolName)
+    )
+  )
+    throw new GoogleActionApprovalError();
+}
+
+export function googleActionCapability(
+  toolName: GoogleActionBinding["toolName"]
+) {
+  return toolName === "gmail-send" || toolName === "gmail-update"
+    ? "gmail.write"
+    : "calendar.write";
 }

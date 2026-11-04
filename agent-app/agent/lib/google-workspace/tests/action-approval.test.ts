@@ -256,17 +256,21 @@ describe("Google exact-call framework approval", () => {
     const execute = vi.fn<() => Promise<string>>(
       async () => "private provider result"
     );
-    await expect(withGoogleAuth(context(), execute)).rejects.toThrow(
-      "access removed"
-    );
+    await expect(
+      withGoogleAuth(context(), execute, "gmail.read")
+    ).rejects.toThrow("access removed");
     expect(boundary.token).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
     boundary.enrolled = true;
     await expect(
-      withGoogleAuth(context(), async () => {
-        boundary.enrolled = false;
-        return "private provider result";
-      })
+      withGoogleAuth(
+        context(),
+        async () => {
+          boundary.enrolled = false;
+          return "private provider result";
+        },
+        "gmail.read"
+      )
     ).rejects.toThrow("Google Workspace operation failed");
   });
 });

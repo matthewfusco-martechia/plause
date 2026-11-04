@@ -13,6 +13,7 @@ export default defineChannel({
   routes: [
     POST("/webhooks/linq", async (request, { waitUntil }) => {
       if (
+        env.MESSAGING_PROVIDER !== "linq" ||
         !env.LINQ_API_KEY ||
         !env.LINQ_WEBHOOK_SIGNING_SECRET ||
         !env.LINQ_PHONE_NUMBER ||

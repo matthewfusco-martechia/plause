@@ -22,11 +22,12 @@ export const scheduledAgentJobs = pgTable(
     createdByUserId: text("created_by_user_id").notNull(),
     prompt: text("prompt").notNull(),
     conversationChannel: text("conversation_channel", {
-      enum: ["eve", "linq"],
+      enum: ["eve", "linq", "inkbox"],
     }).notNull(),
     conversationId: text("conversation_id").notNull(),
     replyAnchorMessageId: text("reply_anchor_message_id"),
     timing: jsonb("timing").notNull(),
+    notificationPolicy: jsonb("notification_policy"),
     missedRunPolicy: text("missed_run_policy", {
       enum: ["skip", "run_latest", "catch_up"],
     })
@@ -75,7 +76,7 @@ export const scheduledAgentJobs = pgTable(
     }).onDelete("cascade"),
     check(
       "scheduled_agent_jobs_conversation_channel_check",
-      sql`${table.conversationChannel} IN ('eve', 'linq')`
+      sql`${table.conversationChannel} IN ('eve', 'linq', 'inkbox')`
     ),
     check(
       "scheduled_agent_jobs_conversation_id_check",
@@ -110,6 +111,7 @@ export const scheduledAgentRuns = pgTable(
     jobId: uuid("job_id")
       .notNull()
       .references(() => scheduledAgentJobs.id, { onDelete: "cascade" }),
+    jobRevision: integer("job_revision").notNull().default(0),
     scheduledFor: timestamp("scheduled_for", {
       mode: "date",
       precision: 3,
@@ -141,6 +143,7 @@ export const scheduledAgentRuns = pgTable(
         "queued",
         "delivered",
         "suppressed",
+        "unknown",
       ],
     })
       .notNull()
@@ -162,6 +165,10 @@ export const scheduledAgentRuns = pgTable(
     reportLeaseExpiresAt: timestamp("report_lease_expires_at", {
       mode: "date",
       precision: 3,
+      withTimezone: true,
+    }),
+    reportNotBefore: timestamp("report_not_before", {
+      mode: "date",
       withTimezone: true,
     }),
     lastError: text("last_error"),
@@ -197,7 +204,7 @@ export const scheduledAgentRuns = pgTable(
     ),
     check(
       "scheduled_agent_runs_report_status_check",
-      sql`${table.reportStatus} IN ('not_ready', 'not_needed', 'pending', 'queued', 'delivered', 'suppressed')`
+      sql`${table.reportStatus} IN ('not_ready', 'not_needed', 'pending', 'queued', 'delivered', 'suppressed', 'unknown')`
     ),
     uniqueIndex("scheduled_agent_runs_occurrence_idx").on(
       table.jobId,

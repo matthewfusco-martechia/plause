@@ -17,6 +17,7 @@ export const LINQ_INTERNAL_ROUTE = "/internal/linq/dispatch";
 
 export async function processLinqInbox() {
   if (
+    !linqSelected() ||
     !env.LINQ_API_KEY ||
     !env.LINQ_WEBHOOK_SIGNING_SECRET ||
     !env.LINQ_PHONE_NUMBER ||
@@ -51,6 +52,7 @@ export async function processLinqInbox() {
           ? await findVerifiedAuthUserIdByPhoneNumber(phone)
           : undefined;
         if (
+          !linqSelected() ||
           linqDigest(body) !== row.bodyDigest ||
           envelope.data.chat.owner_handle.handle !== env.LINQ_PHONE_NUMBER ||
           envelope.data.reconciled_at !== undefined ||
@@ -73,6 +75,8 @@ export async function processLinqInbox() {
       if (!(await markLinqInboxDispatched(row.eventKey, token, phoneNumber)))
         return;
       try {
+        if (!linqSelected())
+          throw new Error("Messaging provider changed before relay.");
         const response = await fetch(new URL(LINQ_INTERNAL_ROUTE, origin), {
           method: "POST",
           body,
@@ -88,4 +92,8 @@ export async function processLinqInbox() {
       }
     })
   );
+}
+
+function linqSelected() {
+  return env.MESSAGING_PROVIDER === "linq";
 }

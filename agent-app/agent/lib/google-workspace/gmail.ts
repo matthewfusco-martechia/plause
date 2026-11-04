@@ -50,6 +50,109 @@ const sentMessageSchema = z.object({
   threadId: z.string().optional(),
 });
 
+export const gmailDraftSubjectSchema = z
+  .string()
+  .min(1)
+  .max(500)
+  .regex(
+    /^[^"\\\r\n]+$/u,
+    "Use Gmail search for subjects with quotes, backslashes, or line breaks."
+  );
+
+export async function readGmailDraftBySubject(
+  ctx: ToolContext,
+  rawSubject: string,
+  includeThread = false
+) {
+  const subject = gmailDraftSubjectSchema.parse(rawSubject);
+  return withGmail(ctx, async (client) => {
+    const options = { signal: ctx.abortSignal };
+    const { data } = await client.users.messages.list(
+      {
+        labelIds: ["DRAFT"],
+        maxResults: 10,
+        q: `subject:"${subject}"`,
+        userId: "me",
+      },
+      options
+    );
+    if (data.nextPageToken) return { status: "ambiguous" as const };
+    const candidates = await Promise.all(
+      (data.messages ?? []).flatMap(({ id }) =>
+        id
+          ? [
+              client.users.messages.get(
+                {
+                  format: "metadata",
+                  id,
+                  metadataHeaders: ["Subject"],
+                  userId: "me",
+                },
+                options
+              ),
+            ]
+          : []
+      )
+    );
+    const matches = candidates.filter(
+      ({ data: message }) =>
+        message.labelIds?.includes("DRAFT") &&
+        header(message.payload, "Subject") === subject
+    );
+    if (matches.length > 1) return { status: "ambiguous" as const };
+    const match = matches[0]?.data;
+    const id = match?.id;
+    if (!id) return { status: "not_found" as const };
+    ctx.abortSignal.throwIfAborted();
+    if (includeThread) {
+      if (!match.threadId) return { status: "changed" as const };
+      const thread = await loadGmailThread(
+        client,
+        match.threadId,
+        ctx.abortSignal
+      );
+      if (
+        thread.id !== match.threadId ||
+        !thread.messages.some(
+          (message) =>
+            message.id === id &&
+            message.subject === subject &&
+            message.labels.includes("DRAFT")
+        )
+      )
+        return { status: "changed" as const };
+      return {
+        status: "found" as const,
+        subject,
+        id,
+        thread,
+        untrustedContent: true as const,
+      };
+    }
+    const { data: draft } = await client.users.messages.get(
+      { format: "full", id, userId: "me" },
+      options
+    );
+    if (
+      draft.id !== id ||
+      !draft.labelIds?.includes("DRAFT") ||
+      header(draft.payload, "Subject") !== subject
+    )
+      return { status: "changed" as const };
+
+    const body = plainText(draft.payload);
+    return {
+      status: "found" as const,
+      subject,
+      id,
+      threadId: draft.threadId ?? null,
+      body: redactGoogleText(body, 4000),
+      truncated: body.length > 4000,
+      untrustedContent: true as const,
+    };
+  });
+}
+
 export async function searchGmail(
   ctx: ToolContext,
   query: string,
@@ -88,21 +191,29 @@ export async function searchGmail(
 }
 
 export async function readGmailThread(ctx: ToolContext, threadId: string) {
-  return withGmail(ctx, async (client) => {
-    const { data: thread } = await client.users.threads.get(
-      { format: "full", id: threadId, userId: "me" },
-      { signal: ctx.abortSignal }
-    );
-    return {
-      id: thread.id ?? threadId,
-      messages: (thread.messages ?? []).slice(-20).map((message) =>
-        Object.assign({}, minimizeMessage(message), {
-          attachments: collectAttachments(message.payload),
-          body: redactGoogleText(plainText(message.payload)),
-        })
-      ),
-    };
-  });
+  return withGmail(ctx, (client) =>
+    loadGmailThread(client, threadId, ctx.abortSignal)
+  );
+}
+
+async function loadGmailThread(
+  client: ReturnType<typeof gmail>,
+  threadId: string,
+  signal: AbortSignal
+) {
+  const { data: thread } = await client.users.threads.get(
+    { format: "full", id: threadId, userId: "me" },
+    { signal }
+  );
+  return {
+    id: thread.id ?? threadId,
+    messages: (thread.messages ?? []).slice(-20).map((message) =>
+      Object.assign({}, minimizeMessage(message), {
+        attachments: collectAttachments(message.payload),
+        body: redactGoogleText(plainText(message.payload)),
+      })
+    ),
+  };
 }
 
 export async function updateGmail(
@@ -278,7 +389,11 @@ function withGmail<T>(
   ctx: ToolContext,
   execute: (client: ReturnType<typeof gmail>) => Promise<T>
 ) {
-  return withGoogleAuth(ctx, (auth) => execute(gmail({ auth, version: "v1" })));
+  return withGoogleAuth(
+    ctx,
+    (auth) => execute(gmail({ auth, version: "v1" })),
+    "gmail.read"
+  );
 }
 
 function decodeBase64Url(value: string) {

@@ -4,12 +4,14 @@ import { accessScopeForUser } from "@shared/identity/access-scope";
 import type { assertEnrolledWorkspaceUser } from "@db/services/auth/phone-user";
 
 interface DirectLinqTestConfiguration {
+  MESSAGING_PROVIDER: "disabled" | "inkbox" | "linq";
   LINQ_API_KEY: string | undefined;
   LINQ_PHONE_NUMBER: string | undefined;
 }
 
 const configuration = vi.hoisted(() => {
   const value: DirectLinqTestConfiguration = {
+    MESSAGING_PROVIDER: "linq",
     LINQ_API_KEY: "direct-test-api-key",
     LINQ_PHONE_NUMBER: "+15550100000",
   };
@@ -26,9 +28,46 @@ const scope = accessScopeForUser("better-auth:fixture");
 
 describe("direct Linq transport", () => {
   beforeEach(() => {
+    configuration.MESSAGING_PROVIDER = "linq";
     configuration.LINQ_API_KEY = "direct-test-api-key";
     configuration.LINQ_PHONE_NUMBER = "+15550100000";
-    authorization.mockReset().mockResolvedValue(undefined);
+    authorization.mockReset().mockResolvedValue("+15550100011");
+  });
+
+  it.each(["disabled", "inkbox"] as const)(
+    "does not activate Linq transport when %s is selected",
+    async (provider) => {
+      configuration.MESSAGING_PROVIDER = provider;
+      const send = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", send);
+      await expect(
+        sendNativeLinqMessage(
+          "chat-1",
+          { parts: [{ type: "text", value: "Fixture" }] },
+          undefined,
+          scope
+        )
+      ).rejects.toThrow("not configured");
+      expect(send).not.toHaveBeenCalled();
+    }
+  );
+
+  it("rechecks provider selection after SDK preparation before HTTP", async () => {
+    const send = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", send);
+    authorization.mockImplementationOnce(async () => {
+      configuration.MESSAGING_PROVIDER = "inkbox";
+      return "+15550100011";
+    });
+    await expect(
+      sendNativeLinqMessage(
+        "chat-1",
+        { parts: [{ type: "text", value: "Fixture" }] },
+        undefined,
+        scope
+      )
+    ).rejects.toThrow("Connection error");
+    expect(send).not.toHaveBeenCalled();
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -119,7 +158,7 @@ describe("direct Linq transport", () => {
     expect(send).not.toHaveBeenCalled();
     authorization
       .mockReset()
-      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce("+15550100011")
       .mockRejectedValueOnce(new Error("Private Plause access unavailable"));
     await expect(
       sendNativeLinqMessage(

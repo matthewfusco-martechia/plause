@@ -3,6 +3,7 @@ import { readGoogleWorkspaceConnection } from "@db/services/google-workspace";
 import { requireRequestScope } from "@web/auth/request-scope";
 import { Alert, AlertDescription, AlertTitle } from "@web/components/ui/alert";
 import { Button } from "@web/components/ui/button";
+import { googleWorkspaceCapabilities } from "@shared/google-workspace/connection";
 
 export const metadata = { title: "Google Workspace permissions" };
 
@@ -42,6 +43,23 @@ export default async function Page({
           </AlertDescription>
         </Alert>
       ) : null}
+      {connection.state === "connected" && connection.capabilities.length ? (
+        <section
+          className="space-y-2"
+          aria-labelledby="google-connected-permissions"
+        >
+          <h2 className="type-section-title" id="google-connected-permissions">
+            Available permissions
+          </h2>
+          <ul className="type-supporting-body list-disc space-y-1 pl-5">
+            {connection.capabilities.map((capability) => (
+              <li key={capability}>
+                {googleWorkspaceCapabilities[capability].label}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <section
         className="space-y-3"
         aria-labelledby="google-permissions-heading"
@@ -51,11 +69,12 @@ export default async function Page({
         </h2>
         <ul className="type-supporting-body list-disc space-y-2 pl-5 text-muted-foreground">
           <li>
-            Read Gmail messages; Google also grants permission to send mail and
-            modify message labels.
+            Read Gmail messages. Sending mail and changing labels are requested
+            only if you choose the additional write permissions below.
           </li>
           <li>
-            View and manage Calendar events and read free/busy availability.
+            Read Calendar events and free/busy availability. Managing events is
+            requested only with the additional write permissions.
           </li>
           <li>Read your Google Contacts.</li>
           <li>
@@ -70,8 +89,15 @@ export default async function Page({
         <p className="type-supporting-body text-muted-foreground">
           Gmail and Calendar write tools remain disabled by default. Enabling
           them also requires a separate approval for each call. A Google grant
-          is not permission to perform a particular action. Background tasks may
-          use the connected account until you disconnect it.
+          is not permission to perform a particular action. An approved
+          background task may read the connected account until you disconnect
+          it.
+        </p>
+        <p className="type-supporting-body text-muted-foreground">
+          You can grant some services and decline others at Google. Plause uses
+          only the permissions you review here and grant there. You can return
+          to add permissions later; starting a new connection pauses the
+          previous one until you finish at Google.
         </p>
         <p className="type-supporting-body text-muted-foreground">
           Disconnect removes local tokens and fences new tool results first,
@@ -98,16 +124,37 @@ export default async function Page({
             client before an account can connect.
           </AlertDescription>
         </Alert>
-      ) : connection.state === "connected" ? (
-        <Link className="type-supporting-body underline" href="/">
-          Manage or disconnect this account in your workspace
-        </Link>
       ) : (
         <form
           action="/api/connections/google/start"
           method="post"
           className="space-y-4"
         >
+          <fieldset className="space-y-3">
+            <legend className="type-section-title mb-2">Choose access</legend>
+            <label className="type-supporting-body flex items-start gap-3">
+              <input
+                type="radio"
+                name="access"
+                value="read"
+                defaultChecked
+                className="mt-1"
+              />
+              <span>Read mail, Calendar, Contacts and Drive files</span>
+            </label>
+            <label className="type-supporting-body flex items-start gap-3">
+              <input
+                type="radio"
+                name="access"
+                value="write"
+                className="mt-1"
+              />
+              <span>
+                Also allow mail sending, label changes and Calendar event
+                changes
+              </span>
+            </label>
+          </fieldset>
           <label className="type-supporting-body flex items-start gap-3">
             <input
               type="checkbox"
@@ -121,7 +168,16 @@ export default async function Page({
               account I choose to this Plause account.
             </span>
           </label>
-          <Button type="submit">Continue to Google</Button>
+          <Button type="submit">
+            {connection.state === "connected"
+              ? "Review permissions at Google"
+              : "Continue to Google"}
+          </Button>
+          {connection.state === "connected" ? (
+            <Link className="type-supporting-body block underline" href="/">
+              Manage or disconnect this account in your workspace
+            </Link>
+          ) : null}
         </form>
       )}
       <Link className="type-supporting-body underline" href="/">

@@ -8,6 +8,7 @@ import {
 
 interface InternalTestEnvironment {
   INTERNAL_SERVICE_SECRET: string | undefined;
+  PLAUSE_EDGE_INTERNAL_TOKEN?: string;
 }
 
 const controls = vi.hoisted(() => {
@@ -35,6 +36,7 @@ describe("portable scheduled callback authentication", () => {
     controls.env.INTERNAL_SERVICE_SECRET =
       "fixture-internal-secret-0123456789abcdef";
     controls.seen.clear();
+    delete controls.env.PLAUSE_EDGE_INTERNAL_TOKEN;
     controls.claim.mockReset().mockImplementation(async (receipt) => {
       if (controls.seen.has(receipt.requestId)) return false;
       controls.seen.add(receipt.requestId);
@@ -42,6 +44,19 @@ describe("portable scheduled callback authentication", () => {
     });
   });
   afterEach(() => vi.useRealTimers());
+
+  it("authenticates a due-task tick once and never accepts its replay", async () => {
+    const path = "/internal/schedules/tick";
+    const request = new Request(`https://self-hosted.example${path}`, {
+      method: "POST",
+      body: "{}",
+      headers: signScheduledRequest(path, "{}"),
+    });
+    const replay = request.clone();
+    expect(await authenticateScheduledRequest(request)).toEqual({ body: "{}" });
+    expect(await responseStatus(replay)).toBe(409);
+    expect(controls.claim.mock.calls[0]?.[0].path).toBe(path);
+  });
 
   it("authenticates exact raw JSON without Vercel or browser credentials", async () => {
     const request = signedRequest();
@@ -66,6 +81,30 @@ describe("portable scheduled callback authentication", () => {
     expect(controls.claim.mock.calls[0]?.[0].requestId).not.toBe(
       controls.claim.mock.calls[2]?.[0].requestId
     );
+  });
+
+  it("adds edge admission without replacing the signed body or nonce checks", async () => {
+    controls.env.PLAUSE_EDGE_INTERNAL_TOKEN =
+      "fictional-edge-token-0123456789abcdef";
+    const request = signedRequest();
+    expect(request.headers.get("authorization")).toBe(
+      `Bearer ${controls.env.PLAUSE_EDGE_INTERNAL_TOKEN}`
+    );
+    expect(await authenticateScheduledRequest(request.clone())).toEqual({
+      body,
+    });
+    expect(await responseStatus(request)).toBe(409);
+    expect(
+      await responseStatus(
+        new Request(`https://self-hosted.example${reportPath}`, {
+          method: "POST",
+          body,
+          headers: {
+            authorization: `Bearer ${controls.env.PLAUSE_EDGE_INTERNAL_TOKEN}`,
+          },
+        })
+      )
+    ).toBe(401);
   });
 
   it.each([-301, 301])(

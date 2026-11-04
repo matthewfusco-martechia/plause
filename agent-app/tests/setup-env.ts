@@ -4,6 +4,7 @@ import { installUnitTestNetworkBoundary } from "./helpers/no-network";
 installUnitTestNetworkBoundary();
 
 const testEnvironment = {
+  SCHEDULED_TASKS_ENABLED: "true",
   BETTER_AUTH_SECRET: "test-auth-secret-0123456789abcdefghijklmnop",
   BETTER_AUTH_URL: "https://example.com",
   R2_ACCOUNT_ID: "00000000000000000000000000000000",

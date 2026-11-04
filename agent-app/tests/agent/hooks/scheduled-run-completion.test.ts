@@ -150,6 +150,8 @@ const completedRun = {
   completedAt: new Date("2026-09-01T13:02:00.000Z"),
   createdAt: new Date("2026-09-01T13:00:00.000Z"),
   deferredCompletionTurnId: null,
+  jobRevision: 0,
+  reportNotBefore: null,
   id: runId,
   pendingInputRequests: null,
   jobId: "00000000-0000-4000-8000-000000000003",
@@ -199,7 +201,7 @@ describe("scheduled run completion hook", () => {
       runId,
       leaseToken,
       "worker-session",
-      21_600_000,
+      900_000,
       new Date("2026-09-01T13:00:05.000Z")
     );
   });
@@ -226,7 +228,7 @@ describe("scheduled run completion hook", () => {
       runId,
       retryLeaseToken,
       "worker-session",
-      21_600_000,
+      900_000,
       new Date("2026-09-01T13:05:05.000Z")
     );
   });

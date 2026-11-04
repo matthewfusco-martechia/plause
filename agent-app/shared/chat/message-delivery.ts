@@ -46,6 +46,7 @@ function requireMessageContent(
 
 const messageOutputSchema = messageContentSchema
   .extend({
+    final: z.boolean().optional(),
     replyTo: replyReferenceSchema.optional(),
   })
   .superRefine((message, context) => {
@@ -53,6 +54,7 @@ const messageOutputSchema = messageContentSchema
   });
 
 const linkOutputSchema = z.strictObject({
+  final: z.boolean().optional(),
   kind: z.literal("link"),
   replyTo: replyReferenceSchema.optional(),
   url: nativeLinkSchema,

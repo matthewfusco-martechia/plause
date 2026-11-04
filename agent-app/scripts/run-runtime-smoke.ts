@@ -15,15 +15,41 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const options = process.argv.slice(2);
-if (options.some((option) => option !== "--openai") || options.length > 1) {
-  throw new Error("Use no arguments or --openai for a deterministic fixture.");
+if (
+  options.some((option) => option !== "--openai" && option !== "--postgres") ||
+  new Set(options).size !== options.length
+) {
+  throw new Error("Use --openai and/or --postgres for deterministic fixtures.");
 }
-const directOpenAI = options[0] === "--openai";
+const directOpenAI = options.includes("--openai");
+const postgres = options.includes("--postgres");
+// Only the explicitly named disposable local database can reach this fixture.
+// Never forward an application's DATABASE_URL or production environment file.
+// oxlint-disable-next-line eslint/no-restricted-properties, turbo/no-undeclared-env-vars -- Dedicated fictional fixture connection, validated before use.
+const postgresUrl = postgres ? process.env.PLAUSE_TEST_POSTGRES_URL : undefined;
+if (postgres) {
+  const url = postgresUrl ? URL.parse(postgresUrl) : null;
+  if (
+    !url ||
+    !["postgres:", "postgresql:"].includes(url.protocol) ||
+    url.hostname !== "127.0.0.1" ||
+    !url.port ||
+    Number(url.port) < 1024 ||
+    url.pathname !== "/world" ||
+    url.username !== "world" ||
+    url.password !== "fictional-hosting-fixture" ||
+    url.search ||
+    url.hash
+  )
+    throw new Error(
+      "Postgres fixtures require the disposable loopback world database."
+    );
+}
 const fixture = await mkdtemp(join(tmpdir(), "openinstinct-runtime-"));
 const artifacts = join(
   root,
   ".eve",
-  directOpenAI ? "openai-runtime-smoke" : "runtime-smoke"
+  `${directOpenAI ? "openai-runtime-smoke" : "runtime-smoke"}${postgres ? "-postgres" : ""}`
 );
 
 try {
@@ -35,6 +61,17 @@ try {
     fixture,
     { recursive: true }
   );
+  if (postgres) {
+    const agentFile = join(fixture, "agent/agent.ts");
+    const source = await readFile(agentFile, "utf8");
+    await writeFile(
+      agentFile,
+      source.replace(
+        "defineAgent({",
+        'defineAgent({ experimental: { workflow: { world: "@workflow/world-postgres" } },'
+      )
+    );
+  }
   // Eve compiles workflow directives from authored tool files, not re-exports.
   // Copy current production source on every run so the fixture cannot drift.
   await mkdir(join(fixture, "agent/tools"), { recursive: true });
@@ -71,13 +108,16 @@ try {
     join(fixture, "node_modules"),
     "junction"
   );
+  const dependencies = { eve: "*" };
+  if (postgres)
+    Object.assign(dependencies, { "@workflow/world-postgres": "5.0.4" });
   await writeFile(
     join(fixture, "package.json"),
     JSON.stringify({
       name: "openinstinct-runtime-smoke",
       private: true,
       type: "module",
-      dependencies: { eve: "*" },
+      dependencies,
     })
   );
   await writeFile(
@@ -87,6 +127,8 @@ try {
         paths: {
           "@agent/*": [join(root, "agent/*")],
           "@shared/*": [join(root, "shared/*")],
+          "@db": [join(root, "db/index.ts")],
+          "@db/*": [join(root, "db/*")],
         },
       },
     })
@@ -112,8 +154,15 @@ try {
         HOME: process.env.HOME,
         TMPDIR: process.env.TMPDIR,
         NODE_ENV: "development",
+        DATABASE_URL: "postgresql://fictional:fictional@127.0.0.1:9/fixture",
+        KERNEL_API_KEY: "fictional-offline-fixture-key",
+        BETTER_AUTH_URL: "http://localhost:3000",
         EVE_TELEMETRY_DISABLED: "1",
         NPM_CONFIG_IGNORE_SCRIPTS: "true",
+        WORKFLOW_POSTGRES_URL: postgresUrl,
+        WORKFLOW_POSTGRES_WORKER_CONCURRENCY: postgres ? "4" : undefined,
+        WORKFLOW_POSTGRES_MAX_POOL_SIZE: postgres ? "10" : undefined,
+        WORKFLOW_POSTGRES_POLL_INTERVAL_MS: postgres ? "2000" : undefined,
       },
       /* oxlint-enable eslint/no-restricted-properties, turbo/no-undeclared-env-vars */
       stdio: "inherit",

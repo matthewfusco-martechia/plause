@@ -11,6 +11,8 @@ it("routes signed callbacks to Eve while password-protecting app routes", () => 
   expect(servicePaths).toEqual([
     "/webhooks/linq",
     "/internal/linq/dispatch",
+    "/webhooks/inkbox",
+    "/internal/inkbox/dispatch",
     ...scheduledRun.routes.map((route) => route.path),
     "/.well-known/workflow/*",
   ]);
